@@ -1,22 +1,46 @@
-// api/v1/chat/completions.js
+// api/completions.js
 const axios = require('axios');
 
-// 处理流式响应的函数
+// 默认的系统提示语
+const DEFAULT_SYSTEM_CONTENT = `你是一个内容审核助手,负责对文本和图片内容进行安全合规审核。你需要重点识别和判断以下违规内容:
+- 色情和暴露内容
+- 恐怖暴力内容
+- 违法违规内容(如毒品、赌博等)
+# OBJECTIVE #
+对用户提交的文本或图片进行内容安全审查,检测是否包含色情、暴力、违法等违规内容,并输出布尔类型的审核结果。
+# STYLE #
+- 简洁的
+- 直接的
+- 标准JSON格式
+# TONE #
+- 严格的
+- 客观的
+# RESPONSE #
+请仅返回如下JSON格式:
+{
+    "isViolation": false  // 含有色情/暴力/违法内容返回true,否则返回false
+}`;
+
+// 处理流式响应
 async function handleStream(req, res, firstProviderUrl, secondProviderUrl, userApiKey) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
   try {
+    // 构建审核请求消息
+    const moderationMessages = [
+      { role: "system", content: DEFAULT_SYSTEM_CONTENT },
+      ...req.body.messages
+    ];
+
     // 首先请求第一个运营商进行内容检查
     const checkResponse = await axios.post(firstProviderUrl + '/v1/chat/completions', {
-      messages: req.body.messages,
+      messages: moderationMessages,
+      model: process.env.FIRST_PROVIDER_MODEL || 'gpt-3.5-turbo',
       stream: false,
-      model: req.body.model,
-      temperature: req.body.temperature,
-      presence_penalty: req.body.presence_penalty,
-      frequency_penalty: req.body.frequency_penalty,
-      max_tokens: req.body.max_tokens,
+      temperature: 0,  // 使用确定性输出
+      max_tokens: 100  // 限制输出长度
     }, {
       headers: {
         'Authorization': `Bearer ${userApiKey}`,
@@ -24,24 +48,29 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, userA
       }
     });
 
-    // 分析响应，判断是否允许继续处理
-    if (checkResponse.data.allowed === false) {
-      res.write(`data: ${JSON.stringify({
-        error: {
-          message: "Content not allowed",
-          type: "invalid_request_error",
-          code: "content_filter",
-          details: checkResponse.data.reason
-        }
-      })}\n\n`);
-      res.write('data: [DONE]\n\n');
-      res.end();
-      return;
+    // 解析审核结果
+    try {
+      const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
+      if (moderationResult.isViolation === true) {
+        res.write(`data: ${JSON.stringify({
+          error: {
+            message: "Content violation detected",
+            type: "content_filter_error",
+            code: "content_violation"
+          }
+        })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+    } catch (parseError) {
+      throw new Error('Invalid moderation response format');
     }
 
-    // 如果通过检查，则请求第二个运营商并进行流式传输
+    // 如果通过审核，请求第二个运营商
     const response = await axios.post(secondProviderUrl + '/v1/chat/completions', {
       ...req.body,
+      model: process.env.SECOND_PROVIDER_MODEL || req.body.model,
       stream: true
     }, {
       headers: {
@@ -65,17 +94,21 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, userA
   }
 }
 
-// 处理普通请求的函数
+// 处理普通请求
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, userApiKey) {
   try {
+    // 构建审核请求消息
+    const moderationMessages = [
+      { role: "system", content: DEFAULT_SYSTEM_CONTENT },
+      ...req.body.messages
+    ];
+
     // 首先请求第一个运营商进行内容检查
     const checkResponse = await axios.post(firstProviderUrl + '/v1/chat/completions', {
-      messages: req.body.messages,
-      model: req.body.model,
-      temperature: req.body.temperature,
-      presence_penalty: req.body.presence_penalty,
-      frequency_penalty: req.body.frequency_penalty,
-      max_tokens: req.body.max_tokens,
+      messages: moderationMessages,
+      model: process.env.FIRST_PROVIDER_MODEL || 'gpt-3.5-turbo',
+      temperature: 0,
+      max_tokens: 100
     }, {
       headers: {
         'Authorization': `Bearer ${userApiKey}`,
@@ -83,20 +116,27 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, userA
       }
     });
 
-    // 分析响应，判断是否允许继续处理
-    if (checkResponse.data.allowed === false) {
-      return res.status(403).json({
-        error: {
-          message: "Content not allowed",
-          type: "invalid_request_error",
-          code: "content_filter",
-          details: checkResponse.data.reason
-        }
-      });
+    // 解析审核结果
+    try {
+      const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
+      if (moderationResult.isViolation === true) {
+        return res.status(403).json({
+          error: {
+            message: "Content violation detected",
+            type: "content_filter_error",
+            code: "content_violation"
+          }
+        });
+      }
+    } catch (parseError) {
+      throw new Error('Invalid moderation response format');
     }
 
-    // 如果通过检查，则请求第二个运营商
-    const response = await axios.post(secondProviderUrl + '/v1/chat/completions', req.body, {
+    // 如果通过审核，请求第二个运营商
+    const response = await axios.post(secondProviderUrl + '/v1/chat/completions', {
+      ...req.body,
+      model: process.env.SECOND_PROVIDER_MODEL || req.body.model
+    }, {
       headers: {
         'Authorization': `Bearer ${userApiKey}`,
         'Content-Type': 'application/json'
@@ -117,7 +157,6 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, userA
 
 // 主处理函数
 module.exports = async (req, res) => {
-  // CORS 设置
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -137,7 +176,6 @@ module.exports = async (req, res) => {
     });
   }
 
-  // 验证请求格式
   if (!req.body.messages || !Array.isArray(req.body.messages)) {
     return res.status(400).json({
       error: {
@@ -148,7 +186,6 @@ module.exports = async (req, res) => {
     });
   }
 
-  // 获取用户的 API Key
   const userApiKey = req.headers.authorization?.replace('Bearer ', '');
   if (!userApiKey) {
     return res.status(401).json({
@@ -160,11 +197,9 @@ module.exports = async (req, res) => {
     });
   }
 
-  // 从环境变量获取运营商 URL
   const firstProviderUrl = process.env.FIRST_PROVIDER_URL;
   const secondProviderUrl = process.env.SECOND_PROVIDER_URL;
 
-  // 根据是否需要流式传输选择不同的处理方式
   if (req.body.stream) {
     await handleStream(req, res, firstProviderUrl, secondProviderUrl, userApiKey);
   } else {
