@@ -110,16 +110,16 @@ function validateMessage(message) {
 
   // 如果是字符串格式的 content
   if (typeof message.content === 'string') {
-    // 如果内容是JSON字符串，尝试解析它
-    if (message.content.startsWith('{') || message.content.startsWith('[')) {
-      try {
-        JSON.parse(message.content);
-        return true;  // 如果可以成功解析为JSON，认为是有效的
-      } catch (e) {
-        // JSON解析失败，继续检查是否为普通字符串
+    // 必须是严格的 JSON 格式
+    try {
+      const parsedContent = JSON.parse(message.content);
+      // 验证解析后的 JSON 是否为对象或数组
+      if (typeof parsedContent === 'object' && parsedContent !== null) {
+        return true;
       }
+    } catch (e) {
+      return false; // JSON 解析失败
     }
-    return true;  // 普通字符串内容
   }
 
   return false;
