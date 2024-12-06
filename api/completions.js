@@ -39,7 +39,7 @@ function handleError(error) {
 
 const axios = require('axios');
 
-// 修改系统提示语以支持图片识别
+// 审核模型的系统提示语
 const DEFAULT_SYSTEM_CONTENT = `你是一个内容审核助手,负责对文本和图片内容进行安全合规审核。你需要重点识别和判断以下违规内容:
 - 色情和暴露内容
 - 恐怖暴力内容
@@ -168,7 +168,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${firstProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: hasImageContent ? 60000 : 30000
+      timeout: hasImageContent ? 60000 : 45000
     };
 
     const secondProviderConfig = {
@@ -176,7 +176,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${secondProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: hasImageContent ? 60000 : 30000
+      timeout: hasImageContent ? 60000 : 45000
     };
 
     try {
@@ -275,7 +275,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${firstProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: hasImageContent ? 60000 : 30000
+      timeout: hasImageContent ? 60000 : 45000
     };
 
     const secondProviderConfig = {
@@ -283,7 +283,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${secondProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: hasImageContent ? 60000 : 30000
+      timeout: hasImageContent ? 60000 : 45000
     };
 
     try {
