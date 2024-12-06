@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/*.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   },
   "routes": [
@@ -11,8 +11,16 @@
       "dest": "/api/completions"
     },
     {
+      "src": "/v1/images/generations", 
+      "dest": "/api/images"
+    },
+    {
+      "src": "/v1/audio/transcriptions", 
+      "dest": "/api/audio"
+    },
+    {
       "src": "/v1/models", 
-      "dest": "/api/getModels"
+      "dest": "/api/models"
     }
   ]
 }
