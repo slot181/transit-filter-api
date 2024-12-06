@@ -31,21 +31,39 @@ function validateMessage(message) {
   if (!message.content) {
     return false;
   }
-  // 如果是数组格式的 content，验证其结构
+  // 如果是数组格式的 content,验证其结构
   if (Array.isArray(message.content)) {
     return message.content.every(item => {
       if (item.type === 'text') {
         return typeof item.text === 'string';
       }
       if (item.type === 'image_url') {
-        return typeof item.image_url === 'string' || 
-               (typeof item.image_url === 'object' && typeof item.image_url.url === 'string');
+        const url = typeof item.image_url === 'string' ? item.image_url : item.image_url.url;
+        // 验证URL格式
+        if (!url.match(/^https?:\/\/.+/)) {
+          return false;
+        }
+        // 验证图片格式
+        if (!url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+          return false;
+        }
+        return true;
       }
       return false;
     });
   }
   // 如果是字符串格式的 content
   return typeof message.content === 'string';
+}
+
+function handleError(error) {
+  return {
+    error: {
+      message: error.message || "An error occurred",
+      type: "server_error",
+      code: error.response?.status || 500
+    }
+  };
 }
 
 async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
@@ -95,7 +113,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
       // 如果包含图片，添加相应的参数
       if (hasImageContent) {
-        moderationRequest.max_tokens = 500;  // 增加token限制以适应图片描述
+        moderationRequest.max_tokens = req.body.max_tokens;  // 增加token限制以适应图片描述
       } else {
         moderationRequest.max_tokens = 100;
       }
@@ -134,7 +152,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
       // 如果包含图片，确保相关参数正确设置
       if (hasImageContent) {
-        secondProviderRequest.max_tokens = req.body.max_tokens || 2000;  // 使用用户设置或默认值
+        secondProviderRequest.max_tokens = req.body.max_tokens || 8192;  // 使用用户设置或默认值
       }
 
       const response = await axios.post(
@@ -205,7 +223,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
 
       // 如果包含图片，添加相应的参数
       if (hasImageContent) {
-        moderationRequest.max_tokens = 500;  // 增加token限制以适应图片描述
+        moderationRequest.max_tokens = req.body.max_tokens;  // 增加token限制以适应图片描述
       } else {
         moderationRequest.max_tokens = 100;
       }
@@ -239,7 +257,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
 
       // 如果包含图片，确保相关参数正确设置
       if (hasImageContent) {
-        secondProviderRequest.max_tokens = req.body.max_tokens || 2000;  // 使用用户设置或默认值
+        secondProviderRequest.max_tokens = req.body.max_tokens || 8192;  // 使用用户设置或默认值
       }
 
       const response = await axios.post(
