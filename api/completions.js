@@ -31,7 +31,8 @@ function validateMessage(message) {
   if (!message.content) {
     return false;
   }
-  // 如果是数组格式的 content,验证其结构
+
+  // 处理数组格式的 content
   if (Array.isArray(message.content)) {
     return message.content.every(item => {
       if (item.type === 'text') {
@@ -52,8 +53,22 @@ function validateMessage(message) {
       return false;
     });
   }
+
   // 如果是字符串格式的 content
-  return typeof message.content === 'string';
+  if (typeof message.content === 'string') {
+    // 如果内容是JSON字符串，尝试解析它
+    if (message.content.startsWith('{') || message.content.startsWith('[')) {
+      try {
+        JSON.parse(message.content);
+        return true;  // 如果可以成功解析为JSON，认为是有效的
+      } catch (e) {
+        // JSON解析失败，继续检查是否为普通字符串
+      }
+    }
+    return true;  // 普通字符串内容
+  }
+
+  return false;
 }
 
 function handleError(error) {
@@ -66,6 +81,28 @@ function handleError(error) {
   };
 }
 
+function preprocessMessages(messages) {
+  return messages.map(message => {
+    // 如果消息内容是字符串但看起来像JSON，尝试解析它
+    if (typeof message.content === 'string' &&
+      (message.content.startsWith('{') || message.content.startsWith('['))) {
+      try {
+        // 尝试解析JSON字符串
+        const parsedContent = JSON.parse(message.content);
+        // 将解析后的内容转换为文本格式
+        return {
+          role: message.role,
+          content: JSON.stringify(parsedContent, null, 2)
+        };
+      } catch (e) {
+        // 如果解析失败，保持原样
+        return message;
+      }
+    }
+    return message;
+  });
+}
+
 async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -73,14 +110,14 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
   try {
     // 检查是否包含图片内容，如果包含则设置max_tokens更大的值以适应图片描述
-    const hasImageContent = req.body.messages.some(msg => 
-      Array.isArray(msg.content) && 
+    const hasImageContent = req.body.messages.some(msg =>
+      Array.isArray(msg.content) &&
       msg.content.some(item => item.type === 'image_url')
     );
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...req.body.messages
+      ...preprocessMessages(req.body.messages)  // 添加预处理步骤
     ];
 
     const firstProviderConfig = {
@@ -113,7 +150,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
       // 如果包含图片，添加相应的参数
       if (hasImageContent) {
-        moderationRequest.max_tokens = req.body.max_tokens;  // 增加token限制以适应图片描述
+        moderationRequest.max_tokens = req.body.max_tokens || 8192;  // 使用用户设置或默认值以适应图片描述
       } else {
         moderationRequest.max_tokens = 100;
       }
@@ -184,14 +221,14 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   try {
     // 检查是否包含图片内容
-    const hasImageContent = req.body.messages.some(msg => 
-      Array.isArray(msg.content) && 
+    const hasImageContent = req.body.messages.some(msg =>
+      Array.isArray(msg.content) &&
       msg.content.some(item => item.type === 'image_url')
     );
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...req.body.messages
+      ...preprocessMessages(req.body.messages)  // 添加预处理步骤
     ];
 
     const firstProviderConfig = {
@@ -223,7 +260,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
 
       // 如果包含图片，添加相应的参数
       if (hasImageContent) {
-        moderationRequest.max_tokens = req.body.max_tokens;  // 增加token限制以适应图片描述
+        moderationRequest.max_tokens = req.body.max_tokens || 8192;  // 使用用户设置或默认值以适应图片描述
       } else {
         moderationRequest.max_tokens = 100;
       }
@@ -334,15 +371,17 @@ module.exports = async (req, res) => {
     });
   }
 
-  // 验证每条消息的格式
+  // 修改消息验证部分
   for (const message of req.body.messages) {
     if (!validateMessage(message)) {
+      console.error('Invalid message format:', JSON.stringify(message, null, 2));  // 添加详细日志
       return res.status(400).json({
         error: {
           message: "Invalid message format",
           type: "invalid_request_error",
           code: "invalid_message_format",
-          details: "Each message must have a valid role and content"
+          details: "Each message must have a valid role and content",
+          invalidMessage: message  // 添加具体的无效消息信息
         }
       });
     }
