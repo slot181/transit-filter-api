@@ -1,5 +1,42 @@
 // completions.js
 
+// 处理错误并返回格式化后的错误信息
+function handleError(error) {
+  console.error('Error details:', error);
+
+  if (error.response) {
+    return {
+      error: {
+        message: error.response.data?.error?.message || error.message,
+        type: "api_error",
+        code: error.response.status,
+        provider_error: error.response.data,
+        path: error.config?.url,
+        method: error.config?.method
+      }
+    };
+  }
+
+  if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED') {
+    return {
+      error: {
+        message: "Provider service is unavailable",
+        type: "connection_error",
+        code: 503,
+        details: error.message
+      }
+    };
+  }
+
+  return {
+    error: {
+      message: error.message,
+      type: "internal_error",
+      code: 500
+    }
+  };
+}
+
 const axios = require('axios');
 
 // 修改系统提示语以支持图片识别
@@ -86,16 +123,6 @@ function validateMessage(message) {
   }
 
   return false;
-}
-
-function handleError(error) {
-  return {
-    error: {
-      message: error.message || "An error occurred",
-      type: "server_error",
-      code: error.response?.status || 500
-    }
-  };
 }
 
 function preprocessMessages(messages) {
