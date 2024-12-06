@@ -153,7 +153,6 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    // 检查是否包含图片内容，如果包含则设置max_tokens更大的值以适应图片描述
     const hasImageContent = req.body.messages.some(msg =>
       Array.isArray(msg.content) &&
       msg.content.some(item => item.type === 'image_url')
@@ -161,7 +160,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...preprocessMessages(req.body.messages)  // 添加预处理步骤
+      ...preprocessMessages(req.body.messages)
     ];
 
     const firstProviderConfig = {
@@ -169,7 +168,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${firstProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: hasImageContent ? 60000 : 30000  // 图片处理给予更长的超时时间
+      timeout: hasImageContent ? 60000 : 30000
     };
 
     const secondProviderConfig = {
@@ -181,7 +180,6 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     };
 
     try {
-      // 构建审核请求
       const moderationRequest = {
         messages: moderationMessages,
         model: firstProviderModel,
@@ -189,12 +187,12 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         temperature: 0,
         response_format: {
           type: "json_object"
-        }
+        },
+        tools: req.body.tools || [] // 添加 tools 参数支持
       };
 
-      // 如果包含图片，添加相应的参数
       if (hasImageContent) {
-        moderationRequest.max_tokens = req.body.max_tokens || 8192;  // 使用用户设置或默认值以适应图片描述
+        moderationRequest.max_tokens = req.body.max_tokens || 8192;
       } else {
         moderationRequest.max_tokens = 100;
       }
@@ -224,16 +222,14 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         throw new Error('Invalid moderation response format');
       }
 
-      // 构建第二个运营商的请求
-      // 注意：确保原始请求的所有参数都被保留
       const secondProviderRequest = {
         ...req.body,
-        stream: true
+        stream: true,
+        tools: req.body.tools || [] // 添加 tools 参数支持
       };
 
-      // 如果包含图片，确保相关参数正确设置
       if (hasImageContent) {
-        secondProviderRequest.max_tokens = req.body.max_tokens || 8192;  // 使用用户设置或默认值
+        secondProviderRequest.max_tokens = req.body.max_tokens || 8192;
       }
 
       const response = await axios.post(
@@ -264,7 +260,6 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   try {
-    // 检查是否包含图片内容
     const hasImageContent = req.body.messages.some(msg =>
       Array.isArray(msg.content) &&
       msg.content.some(item => item.type === 'image_url')
@@ -272,7 +267,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...preprocessMessages(req.body.messages)  // 添加预处理步骤
+      ...preprocessMessages(req.body.messages)
     ];
 
     const firstProviderConfig = {
@@ -280,7 +275,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${firstProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: hasImageContent ? 60000 : 30000  // 图片处理给予更长的超时时间
+      timeout: hasImageContent ? 60000 : 30000
     };
 
     const secondProviderConfig = {
@@ -292,19 +287,18 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     };
 
     try {
-      // 构建审核请求
       const moderationRequest = {
         messages: moderationMessages,
         model: firstProviderModel,
         temperature: 0,
         response_format: {
           type: "json_object"
-        }
+        },
+        tools: req.body.tools || [] // 添加 tools 参数支持
       };
 
-      // 如果包含图片，添加相应的参数
       if (hasImageContent) {
-        moderationRequest.max_tokens = req.body.max_tokens || 8192;  // 使用用户设置或默认值以适应图片描述
+        moderationRequest.max_tokens = req.body.max_tokens || 8192;
       } else {
         moderationRequest.max_tokens = 100;
       }
@@ -331,14 +325,13 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         throw new Error('Invalid moderation response format');
       }
 
-      // 构建第二个运营商的请求
       const secondProviderRequest = {
-        ...req.body
+        ...req.body,
+        tools: req.body.tools || [] // 添加 tools 参数支持
       };
 
-      // 如果包含图片，确保相关参数正确设置
       if (hasImageContent) {
-        secondProviderRequest.max_tokens = req.body.max_tokens || 8192;  // 使用用户设置或默认值
+        secondProviderRequest.max_tokens = req.body.max_tokens || 8192;
       }
 
       const response = await axios.post(
