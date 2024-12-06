@@ -1,13 +1,15 @@
-// api/completions.js
+// completions.js
+
 const axios = require('axios');
 
-// 默认的系统提示语
+// 修改系统提示语以支持图片识别
 const DEFAULT_SYSTEM_CONTENT = `你是一个内容审核助手,负责对文本和图片内容进行安全合规审核。你需要重点识别和判断以下违规内容:
 - 色情和暴露内容
 - 恐怖暴力内容
 - 违法违规内容(如毒品、赌博等)
 # OBJECTIVE #
 对用户提交的文本或图片进行内容安全审查,检测是否包含色情、暴力、违法等违规内容,并输出布尔类型的审核结果。
+如果消息中包含图片，请仔细分析图片内容。
 # STYLE #
 - 简洁的
 - 直接的
@@ -21,141 +23,244 @@ const DEFAULT_SYSTEM_CONTENT = `你是一个内容审核助手,负责对文本�
     "isViolation": false  // 含有色情/暴力/违法内容返回true,否则返回false
 }`;
 
-// 处理流式响应
-async function handleStream(req, res, firstProviderUrl, secondProviderUrl, userApiKey) {
+// 验证消息格式的工具函数
+function validateMessage(message) {
+  if (!message.role || typeof message.role !== 'string') {
+    return false;
+  }
+  if (!message.content) {
+    return false;
+  }
+  // 如果是数组格式的 content，验证其结构
+  if (Array.isArray(message.content)) {
+    return message.content.every(item => {
+      if (item.type === 'text') {
+        return typeof item.text === 'string';
+      }
+      if (item.type === 'image_url') {
+        return typeof item.image_url === 'string' || 
+               (typeof item.image_url === 'object' && typeof item.image_url.url === 'string');
+      }
+      return false;
+    });
+  }
+  // 如果是字符串格式的 content
+  return typeof message.content === 'string';
+}
+
+async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    // 构建审核请求消息
+    // 检查是否包含图片内容，如果包含则设置max_tokens更大的值以适应图片描述
+    const hasImageContent = req.body.messages.some(msg => 
+      Array.isArray(msg.content) && 
+      msg.content.some(item => item.type === 'image_url')
+    );
+
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
       ...req.body.messages
     ];
 
-    // 首先请求第一个运营商进行内容检查
-    const checkResponse = await axios.post(firstProviderUrl + '/v1/chat/completions', {
-      messages: moderationMessages,
-      model: process.env.FIRST_PROVIDER_MODEL || 'gpt-3.5-turbo',
-      stream: false,
-      temperature: 0,  // 使用确定性输出
-      max_tokens: 100  // 限制输出长度
-    }, {
+    const firstProviderConfig = {
       headers: {
-        'Authorization': `Bearer ${userApiKey}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    // 解析审核结果
-    try {
-      const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
-      if (moderationResult.isViolation === true) {
-        res.write(`data: ${JSON.stringify({
-          error: {
-            message: "Content violation detected",
-            type: "content_filter_error",
-            code: "content_violation"
-          }
-        })}\n\n`);
-        res.write('data: [DONE]\n\n');
-        res.end();
-        return;
-      }
-    } catch (parseError) {
-      throw new Error('Invalid moderation response format');
-    }
-
-    // 如果通过审核，请求第二个运营商
-    const response = await axios.post(secondProviderUrl + '/v1/chat/completions', {
-      ...req.body,
-      model: process.env.SECOND_PROVIDER_MODEL || req.body.model,
-      stream: true
-    }, {
-      headers: {
-        'Authorization': `Bearer ${userApiKey}`,
+        'Authorization': `Bearer ${firstProviderKey}`,
         'Content-Type': 'application/json'
       },
-      responseType: 'stream'
-    });
+      timeout: hasImageContent ? 60000 : 30000  // 图片处理给予更长的超时时间
+    };
 
-    response.data.pipe(res);
-  } catch (error) {
-    res.write(`data: ${JSON.stringify({
-      error: {
-        message: error.message,
-        type: "api_error",
-        code: error.response?.status || 500
+    const secondProviderConfig = {
+      headers: {
+        'Authorization': `Bearer ${secondProviderKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: hasImageContent ? 60000 : 30000
+    };
+
+    try {
+      // 构建审核请求
+      const moderationRequest = {
+        messages: moderationMessages,
+        model: firstProviderModel,
+        stream: false,
+        temperature: 0,
+        response_format: {
+          type: "json_object"
+        }
+      };
+
+      // 如果包含图片，添加相应的参数
+      if (hasImageContent) {
+        moderationRequest.max_tokens = 500;  // 增加token限制以适应图片描述
+      } else {
+        moderationRequest.max_tokens = 100;
       }
-    })}\n\n`);
+
+      const checkResponse = await axios.post(
+        firstProviderUrl + '/v1/chat/completions',
+        moderationRequest,
+        firstProviderConfig
+      );
+
+      try {
+        const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
+        if (moderationResult.isViolation === true) {
+          res.write(`data: ${JSON.stringify({
+            error: {
+              message: "Content violation detected",
+              type: "content_filter_error",
+              code: "content_violation"
+            }
+          })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+      } catch (parseError) {
+        console.error('Moderation parsing error:', parseError);
+        throw new Error('Invalid moderation response format');
+      }
+
+      // 构建第二个运营商的请求
+      // 注意：确保原始请求的所有参数都被保留
+      const secondProviderRequest = {
+        ...req.body,
+        stream: true
+      };
+
+      // 如果包含图片，确保相关参数正确设置
+      if (hasImageContent) {
+        secondProviderRequest.max_tokens = req.body.max_tokens || 2000;  // 使用用户设置或默认值
+      }
+
+      const response = await axios.post(
+        secondProviderUrl + '/v1/chat/completions',
+        secondProviderRequest,
+        {
+          ...secondProviderConfig,
+          responseType: 'stream'
+        }
+      );
+
+      response.data.pipe(res);
+    } catch (providerError) {
+      console.error('Provider error:', providerError);
+      const errorResponse = handleError(providerError);
+      res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
+  } catch (error) {
+    console.error('Stream handler error:', error);
+    const errorResponse = handleError(error);
+    res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
     res.write('data: [DONE]\n\n');
     res.end();
   }
 }
 
-// 处理普通请求
-async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, userApiKey) {
+async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   try {
-    // 构建审核请求消息
+    // 检查是否包含图片内容
+    const hasImageContent = req.body.messages.some(msg => 
+      Array.isArray(msg.content) && 
+      msg.content.some(item => item.type === 'image_url')
+    );
+
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
       ...req.body.messages
     ];
 
-    // 首先请求第一个运营商进行内容检查
-    const checkResponse = await axios.post(firstProviderUrl + '/v1/chat/completions', {
-      messages: moderationMessages,
-      model: process.env.FIRST_PROVIDER_MODEL || 'gpt-3.5-turbo',
-      temperature: 0,
-      max_tokens: 100
-    }, {
+    const firstProviderConfig = {
       headers: {
-        'Authorization': `Bearer ${userApiKey}`,
+        'Authorization': `Bearer ${firstProviderKey}`,
         'Content-Type': 'application/json'
-      }
-    });
+      },
+      timeout: hasImageContent ? 60000 : 30000  // 图片处理给予更长的超时时间
+    };
 
-    // 解析审核结果
+    const secondProviderConfig = {
+      headers: {
+        'Authorization': `Bearer ${secondProviderKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: hasImageContent ? 60000 : 30000
+    };
+
     try {
-      const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
-      if (moderationResult.isViolation === true) {
-        return res.status(403).json({
-          error: {
-            message: "Content violation detected",
-            type: "content_filter_error",
-            code: "content_violation"
-          }
-        });
+      // 构建审核请求
+      const moderationRequest = {
+        messages: moderationMessages,
+        model: firstProviderModel,
+        temperature: 0,
+        response_format: {
+          type: "json_object"
+        }
+      };
+
+      // 如果包含图片，添加相应的参数
+      if (hasImageContent) {
+        moderationRequest.max_tokens = 500;  // 增加token限制以适应图片描述
+      } else {
+        moderationRequest.max_tokens = 100;
       }
-    } catch (parseError) {
-      throw new Error('Invalid moderation response format');
+
+      const checkResponse = await axios.post(
+        firstProviderUrl + '/v1/chat/completions',
+        moderationRequest,
+        firstProviderConfig
+      );
+
+      try {
+        const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
+        if (moderationResult.isViolation === true) {
+          return res.status(403).json({
+            error: {
+              message: "Content violation detected",
+              type: "content_filter_error",
+              code: "content_violation"
+            }
+          });
+        }
+      } catch (parseError) {
+        console.error('Moderation parsing error:', parseError);
+        throw new Error('Invalid moderation response format');
+      }
+
+      // 构建第二个运营商的请求
+      const secondProviderRequest = {
+        ...req.body
+      };
+
+      // 如果包含图片，确保相关参数正确设置
+      if (hasImageContent) {
+        secondProviderRequest.max_tokens = req.body.max_tokens || 2000;  // 使用用户设置或默认值
+      }
+
+      const response = await axios.post(
+        secondProviderUrl + '/v1/chat/completions',
+        secondProviderRequest,
+        secondProviderConfig
+      );
+
+      res.json(response.data);
+    } catch (providerError) {
+      console.error('Provider error:', providerError);
+      const errorResponse = handleError(providerError);
+      res.status(errorResponse.error.code).json(errorResponse);
     }
-
-    // 如果通过审核，请求第二个运营商
-    const response = await axios.post(secondProviderUrl + '/v1/chat/completions', {
-      ...req.body,
-      model: process.env.SECOND_PROVIDER_MODEL || req.body.model
-    }, {
-      headers: {
-        'Authorization': `Bearer ${userApiKey}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    res.json(response.data);
   } catch (error) {
-    res.status(error.response?.status || 500).json({
-      error: {
-        message: error.message,
-        type: "api_error",
-        code: error.response?.status || 500
-      }
-    });
+    console.error('Normal handler error:', error);
+    const errorResponse = handleError(error);
+    res.status(errorResponse.error.code).json(errorResponse);
   }
 }
 
-// 主处理函数
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -176,6 +281,31 @@ module.exports = async (req, res) => {
     });
   }
 
+  // 验证API访问密钥
+  const authKey = req.headers.authorization?.replace('Bearer ', '');
+  const validAuthKey = process.env.AUTH_KEY;
+
+  if (!authKey || authKey !== validAuthKey) {
+    return res.status(401).json({
+      error: {
+        message: "Invalid authentication key",
+        type: "invalid_request_error",
+        code: "invalid_auth_key"
+      }
+    });
+  }
+
+  if (!req.body || typeof req.body !== 'object') {
+    return res.status(400).json({
+      error: {
+        message: "Invalid request body",
+        type: "invalid_request_error",
+        code: "invalid_body"
+      }
+    });
+  }
+
+  // 验证消息格式
   if (!req.body.messages || !Array.isArray(req.body.messages)) {
     return res.status(400).json({
       error: {
@@ -186,23 +316,81 @@ module.exports = async (req, res) => {
     });
   }
 
-  const userApiKey = req.headers.authorization?.replace('Bearer ', '');
-  if (!userApiKey) {
-    return res.status(401).json({
+  // 验证每条消息的格式
+  for (const message of req.body.messages) {
+    if (!validateMessage(message)) {
+      return res.status(400).json({
+        error: {
+          message: "Invalid message format",
+          type: "invalid_request_error",
+          code: "invalid_message_format",
+          details: "Each message must have a valid role and content"
+        }
+      });
+    }
+  }
+
+  // 验证模型
+  if (!req.body.model) {
+    return res.status(400).json({
       error: {
-        message: "No API key provided",
+        message: "model is required",
         type: "invalid_request_error",
-        code: "no_api_key"
+        code: "invalid_model"
       }
     });
   }
 
   const firstProviderUrl = process.env.FIRST_PROVIDER_URL;
   const secondProviderUrl = process.env.SECOND_PROVIDER_URL;
+  const firstProviderModel = process.env.FIRST_PROVIDER_MODEL;
+  const firstProviderKey = process.env.FIRST_PROVIDER_KEY;
+  const secondProviderKey = process.env.SECOND_PROVIDER_KEY;
 
-  if (req.body.stream) {
-    await handleStream(req, res, firstProviderUrl, secondProviderUrl, userApiKey);
-  } else {
-    await handleNormal(req, res, firstProviderUrl, secondProviderUrl, userApiKey);
+  // 检查所有必需的环境变量
+  const missingVars = [];
+  if (!firstProviderUrl) missingVars.push('FIRST_PROVIDER_URL');
+  if (!secondProviderUrl) missingVars.push('SECOND_PROVIDER_URL');
+  if (!firstProviderModel) missingVars.push('FIRST_PROVIDER_MODEL');
+  if (!firstProviderKey) missingVars.push('FIRST_PROVIDER_KEY');
+  if (!secondProviderKey) missingVars.push('SECOND_PROVIDER_KEY');
+  if (!validAuthKey) missingVars.push('AUTH_KEY');
+
+  if (missingVars.length > 0) {
+    return res.status(500).json({
+      error: {
+        message: "Missing required environment variables",
+        type: "configuration_error",
+        code: "provider_not_configured",
+        details: `Missing: ${missingVars.join(', ')}`
+      }
+    });
+  }
+
+  try {
+    if (req.body.stream) {
+      await handleStream(
+        req,
+        res,
+        firstProviderUrl,
+        secondProviderUrl,
+        firstProviderModel,
+        firstProviderKey,
+        secondProviderKey
+      );
+    } else {
+      await handleNormal(
+        req,
+        res,
+        firstProviderUrl,
+        secondProviderUrl,
+        firstProviderModel,
+        firstProviderKey,
+        secondProviderKey
+      );
+    }
+  } catch (error) {
+    const errorResponse = handleError(error);
+    res.status(errorResponse.error.code).json(errorResponse);
   }
 };

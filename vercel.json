@@ -1,9 +1,13 @@
 {
-    "version": 2,
-    "routes": [
-      {
-        "src": "/v1/chat/completions",
-        "dest": "/api/completions"
-      }
-    ]
-  }
+  "version": 2,
+  "routes": [
+    {
+      "src": "/v1/chat/completions",
+      "dest": "/api/completions"
+    },
+    {
+      "src": "/v1/models",
+      "dest": "/api/getModels"
+    }
+  ]
+}
