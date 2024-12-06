@@ -8,6 +8,10 @@
     {
       "src": "/v1/models",
       "dest": "/api/getModels"
+    },
+    {
+      "src": "/",
+      "dest": "/status"
     }
   ]
 }
