@@ -18,8 +18,27 @@ module.exports = async (req, res) => {
     });
   }
 
-  res.status(200).json({
-    status: "API is running successfully",
-    timestamp: new Date().toISOString()
-  });
+  const acceptHeader = req.headers['accept'] || '';
+  if (acceptHeader.includes('text/html')) {
+    res.setHeader('Content-Type', 'text/html');
+    res.status(200).end(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>API Status</title>
+      </head>
+      <body>
+        <h1>API is running successfully</h1>
+        <p>Timestamp: ${new Date().toISOString()}</p>
+      </body>
+      </html>
+    `);
+  } else {
+    res.status(200).json({
+      status: "API is running successfully",
+      timestamp: new Date().toISOString()
+    });
+  }
 };
