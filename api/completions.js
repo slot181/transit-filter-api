@@ -28,11 +28,20 @@ function handleError(error) {
     };
   }
 
+  // 移除可能导致循环引用的属性
+  const sanitizedError = {
+    message: error.message,
+    stack: error.stack,
+    code: error.code,
+    name: error.name
+  };
+
   return {
     error: {
-      message: error.message,
+      message: sanitizedError.message,
       type: "internal_error",
-      code: 500
+      code: 500,
+      details: sanitizedError
     }
   };
 }
