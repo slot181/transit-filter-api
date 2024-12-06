@@ -375,7 +375,6 @@ module.exports = async (req, res) => {
 
   // 验证API访问密钥
   const authKey = req.headers.authorization?.replace('Bearer ', '');
-  const validAuthKey = process.env.AUTH_KEY;
 
   if (!authKey || authKey !== validAuthKey) {
     return res.status(401).json({
@@ -440,6 +439,7 @@ module.exports = async (req, res) => {
   const firstProviderModel = process.env.FIRST_PROVIDER_MODEL;
   const firstProviderKey = process.env.FIRST_PROVIDER_KEY;
   const secondProviderKey = process.env.SECOND_PROVIDER_KEY;
+  const validAuthKey = process.env.AUTH_KEY;
 
   // 检查所有必需的环境变量
   const missingVars = [];
