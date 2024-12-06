@@ -11,7 +11,7 @@
     },
     {
       "src": "/",
-      "dest": "/status"
+      "dest": "/status.js"
     }
   ]
 }
