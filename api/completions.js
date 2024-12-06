@@ -162,6 +162,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
   res.setHeader('Connection', 'keep-alive');
 
   try {
+    // 修改逻辑：仅检查当前消息是否包含图片
     const hasImageContent = req.body.messages.some(msg =>
       Array.isArray(msg.content) &&
       msg.content.some(item => item.type === 'image_url')
@@ -169,7 +170,9 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...preprocessMessages(req.body.messages)
+      ...preprocessMessages(req.body.messages.filter(msg =>
+        !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
+      )) // 过滤掉包含图片的消息
     ];
 
     const firstProviderConfig = {
@@ -261,6 +264,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   try {
+    // 修改逻辑：仅检查当前消息是否包含图片
     const hasImageContent = req.body.messages.some(msg =>
       Array.isArray(msg.content) &&
       msg.content.some(item => item.type === 'image_url')
@@ -268,7 +272,9 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...preprocessMessages(req.body.messages)
+      ...preprocessMessages(req.body.messages.filter(msg =>
+        !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
+      )) // 过滤掉包含图片的消息
     ];
 
     const firstProviderConfig = {
