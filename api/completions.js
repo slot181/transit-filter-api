@@ -177,7 +177,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${firstProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: hasImageContent ? 60000 : 45000
+      timeout: 45000 // 第一个运营商不处理图片，固定超时时间
     };
 
     const secondProviderConfig = {
@@ -188,7 +188,8 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       timeout: hasImageContent ? 60000 : 45000
     };
 
-    try {
+    if (!hasImageContent) {
+      // 第一个运营商仅处理文本内容
       const moderationRequest = {
         messages: moderationMessages,
         model: firstProviderModel,
@@ -197,14 +198,10 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         response_format: {
           type: "json_object"
         },
-        tools: req.body.tools || [] // 添加 tools 参数支持
+        tools: req.body.tools || []
       };
 
-      if (hasImageContent) {
-        moderationRequest.max_tokens = req.body.max_tokens || 8192;
-      } else {
-        moderationRequest.max_tokens = 100;
-      }
+      moderationRequest.max_tokens = 100;
 
       const checkResponse = await axios.post(
         firstProviderUrl + '/v1/chat/completions',
@@ -230,34 +227,29 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         console.error('Moderation parsing error:', parseError);
         throw new Error('Invalid moderation response format');
       }
-
-      const secondProviderRequest = {
-        ...req.body,
-        stream: true,
-        tools: req.body.tools || [] // 添加 tools 参数支持
-      };
-
-      if (hasImageContent) {
-        secondProviderRequest.max_tokens = req.body.max_tokens || 8192;
-      }
-
-      const response = await axios.post(
-        secondProviderUrl + '/v1/chat/completions',
-        secondProviderRequest,
-        {
-          ...secondProviderConfig,
-          responseType: 'stream'
-        }
-      );
-
-      response.data.pipe(res);
-    } catch (providerError) {
-      console.error('Provider error:', providerError);
-      const errorResponse = handleError(providerError);
-      res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
-      res.write('data: [DONE]\n\n');
-      res.end();
     }
+
+    // 第二个运营商处理图片或其他请求
+    const secondProviderRequest = {
+      ...req.body,
+      stream: true,
+      tools: req.body.tools || []
+    };
+
+    if (hasImageContent) {
+      secondProviderRequest.max_tokens = req.body.max_tokens || 8192;
+    }
+
+    const response = await axios.post(
+      secondProviderUrl + '/v1/chat/completions',
+      secondProviderRequest,
+      {
+        ...secondProviderConfig,
+        responseType: 'stream'
+      }
+    );
+
+    response.data.pipe(res);
   } catch (error) {
     console.error('Stream handler error:', error);
     const errorResponse = handleError(error);
@@ -284,7 +276,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${firstProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: hasImageContent ? 60000 : 45000
+      timeout: 45000 // 第一个运营商不处理图片，固定超时时间
     };
 
     const secondProviderConfig = {
@@ -295,7 +287,8 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       timeout: hasImageContent ? 60000 : 45000
     };
 
-    try {
+    if (!hasImageContent) {
+      // 第一个运营商仅处理文本内容
       const moderationRequest = {
         messages: moderationMessages,
         model: firstProviderModel,
@@ -303,14 +296,10 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         response_format: {
           type: "json_object"
         },
-        tools: req.body.tools || [] // 添加 tools 参数支持
+        tools: req.body.tools || []
       };
 
-      if (hasImageContent) {
-        moderationRequest.max_tokens = req.body.max_tokens || 8192;
-      } else {
-        moderationRequest.max_tokens = 100;
-      }
+      moderationRequest.max_tokens = 100;
 
       const checkResponse = await axios.post(
         firstProviderUrl + '/v1/chat/completions',
@@ -333,28 +322,25 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         console.error('Moderation parsing error:', parseError);
         throw new Error('Invalid moderation response format');
       }
-
-      const secondProviderRequest = {
-        ...req.body,
-        tools: req.body.tools || [] // 添加 tools 参数支持
-      };
-
-      if (hasImageContent) {
-        secondProviderRequest.max_tokens = req.body.max_tokens || 8192;
-      }
-
-      const response = await axios.post(
-        secondProviderUrl + '/v1/chat/completions',
-        secondProviderRequest,
-        secondProviderConfig
-      );
-
-      res.json(response.data);
-    } catch (providerError) {
-      console.error('Provider error:', providerError);
-      const errorResponse = handleError(providerError);
-      res.status(errorResponse.error.code).json(errorResponse);
     }
+
+    // 第二个运营商处理图片或其他请求
+    const secondProviderRequest = {
+      ...req.body,
+      tools: req.body.tools || []
+    };
+
+    if (hasImageContent) {
+      secondProviderRequest.max_tokens = req.body.max_tokens || 8192;
+    }
+
+    const response = await axios.post(
+      secondProviderUrl + '/v1/chat/completions',
+      secondProviderRequest,
+      secondProviderConfig
+    );
+
+    res.json(response.data);
   } catch (error) {
     console.error('Normal handler error:', error);
     const errorResponse = handleError(error);
