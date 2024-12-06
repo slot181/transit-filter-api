@@ -162,17 +162,14 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    // 修改逻辑：仅检查当前消息是否包含图片
-    const hasImageContent = req.body.messages.some(msg =>
-      Array.isArray(msg.content) &&
-      msg.content.some(item => item.type === 'image_url')
-    );
+    // 提取文本消息
+    const textMessages = preprocessMessages(req.body.messages.filter(msg =>
+      !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
+    ));
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...preprocessMessages(req.body.messages.filter(msg =>
-        !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
-      )) // 过滤掉包含图片的消息
+      ...textMessages
     ];
 
     const firstProviderConfig = {
@@ -180,7 +177,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${firstProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: 45000 // 第一个运营商不处理图片，固定超时时间
+      timeout: 45000
     };
 
     const secondProviderConfig = {
@@ -188,60 +185,54 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${secondProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: hasImageContent ? 60000 : 45000
+      timeout: 60000
     };
 
-    if (!hasImageContent) {
-      // 第一个运营商仅处理文本内容
-      const moderationRequest = {
-        messages: moderationMessages,
-        model: firstProviderModel,
-        stream: false,
-        temperature: 0,
-        response_format: {
-          type: "json_object"
-        },
-        tools: req.body.tools || []
-      };
+    // 第一个运营商处理文本消息
+    const moderationRequest = {
+      messages: moderationMessages,
+      model: firstProviderModel,
+      stream: false,
+      temperature: 0,
+      response_format: {
+        type: "json_object"
+      },
+      tools: req.body.tools || []
+    };
 
-      moderationRequest.max_tokens = 100;
+    moderationRequest.max_tokens = 100;
 
-      const checkResponse = await axios.post(
-        firstProviderUrl + '/v1/chat/completions',
-        moderationRequest,
-        firstProviderConfig
-      );
+    const checkResponse = await axios.post(
+      firstProviderUrl + '/v1/chat/completions',
+      moderationRequest,
+      firstProviderConfig
+    );
 
-      try {
-        const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
-        if (moderationResult.isViolation === true) {
-          res.write(`data: ${JSON.stringify({
-            error: {
-              message: "Content violation detected",
-              type: "content_filter_error",
-              code: "content_violation"
-            }
-          })}\n\n`);
-          res.write('data: [DONE]\n\n');
-          res.end();
-          return;
-        }
-      } catch (parseError) {
-        console.error('Moderation parsing error:', parseError);
-        throw new Error('Invalid moderation response format');
+    try {
+      const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
+      if (moderationResult.isViolation === true) {
+        res.write(`data: ${JSON.stringify({
+          error: {
+            message: "Content violation detected",
+            type: "content_filter_error",
+            code: "content_violation"
+          }
+        })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
       }
+    } catch (parseError) {
+      console.error('Moderation parsing error:', parseError);
+      throw new Error('Invalid moderation response format');
     }
 
-    // 第二个运营商处理图片或其他请求
+    // 第二个运营商处理所有消息（包括图片）
     const secondProviderRequest = {
       ...req.body,
       stream: true,
       tools: req.body.tools || []
     };
-
-    if (hasImageContent) {
-      secondProviderRequest.max_tokens = req.body.max_tokens || 8192;
-    }
 
     const response = await axios.post(
       secondProviderUrl + '/v1/chat/completions',
@@ -264,17 +255,14 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   try {
-    // 修改逻辑：仅检查当前消息是否包含图片
-    const hasImageContent = req.body.messages.some(msg =>
-      Array.isArray(msg.content) &&
-      msg.content.some(item => item.type === 'image_url')
-    );
+    // 提取文本消息
+    const textMessages = preprocessMessages(req.body.messages.filter(msg =>
+      !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
+    ));
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...preprocessMessages(req.body.messages.filter(msg =>
-        !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
-      )) // 过滤掉包含图片的消息
+      ...textMessages
     ];
 
     const firstProviderConfig = {
@@ -282,7 +270,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${firstProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: 45000 // 第一个运营商不处理图片，固定超时时间
+      timeout: 45000
     };
 
     const secondProviderConfig = {
@@ -290,55 +278,49 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Authorization': `Bearer ${secondProviderKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: hasImageContent ? 60000 : 45000
+      timeout: 60000
     };
 
-    if (!hasImageContent) {
-      // 第一个运营商仅处理文本内容
-      const moderationRequest = {
-        messages: moderationMessages,
-        model: firstProviderModel,
-        temperature: 0,
-        response_format: {
-          type: "json_object"
-        },
-        tools: req.body.tools || []
-      };
+    // 第一个运营商处理文本消息
+    const moderationRequest = {
+      messages: moderationMessages,
+      model: firstProviderModel,
+      temperature: 0,
+      response_format: {
+        type: "json_object"
+      },
+      tools: req.body.tools || []
+    };
 
-      moderationRequest.max_tokens = 100;
+    moderationRequest.max_tokens = 100;
 
-      const checkResponse = await axios.post(
-        firstProviderUrl + '/v1/chat/completions',
-        moderationRequest,
-        firstProviderConfig
-      );
+    const checkResponse = await axios.post(
+      firstProviderUrl + '/v1/chat/completions',
+      moderationRequest,
+      firstProviderConfig
+    );
 
-      try {
-        const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
-        if (moderationResult.isViolation === true) {
-          return res.status(403).json({
-            error: {
-              message: "Content violation detected",
-              type: "content_filter_error",
-              code: "content_violation"
-            }
-          });
-        }
-      } catch (parseError) {
-        console.error('Moderation parsing error:', parseError);
-        throw new Error('Invalid moderation response format');
+    try {
+      const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
+      if (moderationResult.isViolation === true) {
+        return res.status(403).json({
+          error: {
+            message: "Content violation detected",
+            type: "content_filter_error",
+            code: "content_violation"
+          }
+        });
       }
+    } catch (parseError) {
+      console.error('Moderation parsing error:', parseError);
+      throw new Error('Invalid moderation response format');
     }
 
-    // 第二个运营商处理图片或其他请求
+    // 第二个运营商处理所有消息（包括图片）
     const secondProviderRequest = {
       ...req.body,
       tools: req.body.tools || []
     };
-
-    if (hasImageContent) {
-      secondProviderRequest.max_tokens = req.body.max_tokens || 8192;
-    }
 
     const response = await axios.post(
       secondProviderUrl + '/v1/chat/completions',
