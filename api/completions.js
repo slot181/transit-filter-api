@@ -39,16 +39,33 @@ function validateMessage(message) {
         return typeof item.text === 'string';
       }
       if (item.type === 'image_url') {
-        const url = typeof item.image_url === 'string' ? item.image_url : item.image_url.url;
-        // 验证URL格式
-        if (!url.match(/^https?:\/\/.+/)) {
-          return false;
+        if (typeof item.image_url === 'string') {
+          // 验证URL格式
+          if (!item.image_url.match(/^https?:\/\/.+/)) {
+            return false;
+          }
+          // 验证图片格式
+          if (!item.image_url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+            return false;
+          }
+          return true;
+        } else if (typeof item.image_url === 'object' && typeof item.image_url.url === 'string') {
+          const url = item.image_url.url;
+          // 支持 base64 格式的图片
+          if (url.startsWith('data:image/') && url.includes(';base64,')) {
+            return true;
+          }
+          // 验证普通 URL 格式
+          if (!url.match(/^https?:\/\/.+/)) {
+            return false;
+          }
+          // 验证图片格式
+          if (!url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+            return false;
+          }
+          return true;
         }
-        // 验证图片格式
-        if (!url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
-          return false;
-        }
-        return true;
+        return false;
       }
       return false;
     });
