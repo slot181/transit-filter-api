@@ -1,12 +1,17 @@
 {
   "version": 2,
+  "functions": {
+    "api/*.js": {
+      "maxDuration": 30
+    }
+  },
   "routes": [
     {
       "src": "/v1/chat/completions",
       "dest": "/api/completions"
     },
     {
-      "src": "/v1/models",
+      "src": "/v1/models", 
       "dest": "/api/getModels"
     }
   ]
