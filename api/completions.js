@@ -132,18 +132,35 @@ function validateMessage(message) {
 
 function preprocessMessages(messages) {
   return messages.map(message => {
-    if (typeof message.content === 'string' &&
-      (message.content.startsWith('{') || message.content.startsWith('['))) {
-      try {
-        const parsedContent = JSON.parse(message.content);
-        return {
-          role: message.role,
-          content: JSON.stringify(parsedContent, null, 2)
-        };
-      } catch (e) {
-        return message;
-      }
+    if (Array.isArray(message.content)) {
+      // 从数组内容中提取所有文本
+      const textContent = message.content
+        .filter(item => item.type === 'text')
+        .map(item => item.text)
+        .join('\n');
+      
+      return {
+        role: message.role,
+        content: textContent || '' // 如果没有文本则返回空字符串
+      };
     }
+    
+    // 处理字符串内容
+    if (typeof message.content === 'string') {
+      if (message.content.startsWith('{') || message.content.startsWith('[')) {
+        try {
+          const parsedContent = JSON.parse(message.content);
+          return {
+            role: message.role,
+            content: JSON.stringify(parsedContent, null, 2)
+          };
+        } catch (e) {
+          return message;
+        }
+      }
+      return message;
+    }
+    
     return message;
   });
 }
@@ -224,9 +241,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
   try {
     // 提取文本消息进行审核
-    const textMessages = preprocessMessages(req.body.messages.filter(msg =>
-      !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
-    ));
+    const textMessages = preprocessMessages(req.body.messages);
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
@@ -310,9 +325,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   try {
-    const textMessages = preprocessMessages(req.body.messages.filter(msg =>
-      !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
-    ));
+    const textMessages = preprocessMessages(req.body.messages);
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
