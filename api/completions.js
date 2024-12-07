@@ -252,12 +252,21 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     };
 
     // 创建审核请求
-    const moderationRequest = createModerationRequest(
-      moderationMessages,
-      firstProviderModel,
-      req.body.tools,
-      req.body.response_format
-    );
+    const moderationRequest = {
+      messages: moderationMessages,
+      model: firstProviderModel,
+      temperature: 0,
+      max_tokens: 100,
+      // 默认使用 json_object 格式
+      response_format: {
+        type: "json_object"
+      }
+    };
+    
+    // 如果请求中包含 tools，则添加
+    if (req.body.tools) {
+      moderationRequest.tools = req.body.tools;
+    }
 
     console.log('Moderation Request:', moderationRequest);
 
@@ -328,12 +337,21 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       timeout: 60000
     };
 
-    const moderationRequest = createModerationRequest(
-      moderationMessages,
-      firstProviderModel,
-      req.body.tools,
-      req.body.response_format
-    );
+    const moderationRequest = {
+      messages: moderationMessages,
+      model: firstProviderModel,
+      temperature: 0,
+      max_tokens: 100,
+      // 默认使用 json_object 格式
+      response_format: {
+        type: "json_object"
+      }
+    };
+    
+    // 如果请求中包含 tools，则添加
+    if (req.body.tools) {
+      moderationRequest.tools = req.body.tools;
+    }
 
     console.log('Moderation Request:', moderationRequest);
 
