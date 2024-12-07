@@ -2,7 +2,15 @@
 
 // 处理错误并返回格式化后的错误信息
 function handleError(error) {
-  console.error('Error details:', error);
+  console.error('Error details:', {
+    message: error.message,
+    response: error.response?.data,
+    config: {
+      url: error.config?.url,
+      headers: error.config?.headers,
+      data: error.config?.data
+    }
+  });
 
   if (error.response) {
     return {
@@ -28,7 +36,6 @@ function handleError(error) {
     };
   }
 
-  // 移除可能导致循环引用的属性
   const sanitizedError = {
     message: error.message,
     stack: error.stack,
@@ -48,7 +55,6 @@ function handleError(error) {
 
 const axios = require('axios');
 
-// 审核模型的系统提示语
 const DEFAULT_SYSTEM_CONTENT = `你是一个内容审核助手,负责对文本和图片内容进行安全合规审核。你需要重点识别和判断以下违规内容:
 - 色情和暴露内容
 - 恐怖暴力内容
@@ -69,7 +75,6 @@ const DEFAULT_SYSTEM_CONTENT = `你是一个内容审核助手,负责对文本�
     "isViolation": false  // 含有色情/暴力/违法内容返回true,否则返回false
 }`;
 
-// 验证消息格式的工具函数
 function validateMessage(message) {
   if (!message.role || typeof message.role !== 'string') {
     return false;
@@ -78,7 +83,6 @@ function validateMessage(message) {
     return false;
   }
 
-  // 处理数组格式的 content
   if (Array.isArray(message.content)) {
     return message.content.every(item => {
       if (item.type === 'text') {
@@ -86,26 +90,21 @@ function validateMessage(message) {
       }
       if (item.type === 'image_url') {
         if (typeof item.image_url === 'string') {
-          // 验证URL格式
           if (!item.image_url.match(/^https?:\/\/.+/)) {
             return false;
           }
-          // 验证图片格式
           if (!item.image_url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
             return false;
           }
           return true;
         } else if (typeof item.image_url === 'object' && typeof item.image_url.url === 'string') {
           const url = item.image_url.url;
-          // 支持 base64 格式的图片
           if (url.startsWith('data:image/') && url.includes(';base64,')) {
             return true;
           }
-          // 验证普通 URL 格式
           if (!url.match(/^https?:\/\/.+/)) {
             return false;
           }
-          // 验证图片格式
           if (!url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
             return false;
           }
@@ -117,18 +116,15 @@ function validateMessage(message) {
     });
   }
 
-  // 如果是字符串格式的 content
   if (typeof message.content === 'string') {
-    // 如果内容是JSON字符串，尝试解析它
     if (message.content.startsWith('{') || message.content.startsWith('[')) {
       try {
         JSON.parse(message.content);
-        return true;  // 如果可以成功解析为JSON，认为是有效的
+        return true;
       } catch (e) {
-        // JSON解析失败，继续检查是否为普通字符串
       }
     }
-    return true;  // 普通字符串内容
+    return true;
   }
 
   return false;
@@ -136,24 +132,89 @@ function validateMessage(message) {
 
 function preprocessMessages(messages) {
   return messages.map(message => {
-    // 如果消息内容是字符串但看起来像JSON，尝试解析它
     if (typeof message.content === 'string' &&
       (message.content.startsWith('{') || message.content.startsWith('['))) {
       try {
-        // 尝试解析JSON字符串
         const parsedContent = JSON.parse(message.content);
-        // 将解析后的内容转换为文本格式
         return {
           role: message.role,
           content: JSON.stringify(parsedContent, null, 2)
         };
       } catch (e) {
-        // 如果解析失败，保持原样
         return message;
       }
     }
     return message;
   });
+}
+
+// 发送到第二个运营商的请求处理
+async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
+  // 构造基础请求
+  const secondProviderRequest = {
+    model: req.body.model,
+    messages: req.body.messages,
+    stream: req.body.stream || false,
+    temperature: req.body.temperature || 0.7,
+    max_tokens: req.body.max_tokens || 2000
+  };
+
+  // 可选参数按需添加
+  if (req.body.response_format) {
+    secondProviderRequest.response_format = req.body.response_format;
+  }
+
+  if (req.body.tools) {
+    secondProviderRequest.tools = req.body.tools;
+  }
+
+  console.log('Second provider request:', JSON.stringify({
+    ...secondProviderRequest,
+    messages: secondProviderRequest.messages.map(msg => ({
+      ...msg,
+      content: Array.isArray(msg.content) 
+        ? 'Array content (logged separately)'
+        : msg.content
+    }))
+  }, null, 2));
+
+  if (req.body.stream) {
+    return await axios.post(
+      secondProviderUrl + '/v1/chat/completions',
+      secondProviderRequest,
+      {
+        ...secondProviderConfig,
+        responseType: 'stream'
+      }
+    );
+  }
+
+  return await axios.post(
+    secondProviderUrl + '/v1/chat/completions',
+    secondProviderRequest,
+    secondProviderConfig
+  );
+}
+
+// 创建审核请求
+function createModerationRequest(messages, model, tools, response_format) {
+  const moderationRequest = {
+    messages: messages,
+    model: model,
+    temperature: 0,
+    max_tokens: 100
+  };
+
+  // 只有在参数存在时才添加
+  if (response_format) {
+    moderationRequest.response_format = response_format;
+  }
+
+  if (tools) {
+    moderationRequest.tools = tools;
+  }
+
+  return moderationRequest;
 }
 
 async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
@@ -162,7 +223,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    // 提取文本消息
+    // 提取文本消息进行审核
     const textMessages = preprocessMessages(req.body.messages.filter(msg =>
       !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
     ));
@@ -175,7 +236,8 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     const firstProviderConfig = {
       headers: {
         'Authorization': `Bearer ${firstProviderKey}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
       timeout: 45000
     };
@@ -183,26 +245,21 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     const secondProviderConfig = {
       headers: {
         'Authorization': `Bearer ${secondProviderKey}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
       timeout: 60000
     };
 
-    // 第一个运营商处理文本消息
-    const moderationRequest = {
-      messages: moderationMessages,
-      model: firstProviderModel,
-      stream: false,
-      temperature: 0,
-      response_format: {
-        type: "json_object"
-      },
-      tools: req.body.tools || []
-    };
+    // 创建审核请求
+    const moderationRequest = createModerationRequest(
+      moderationMessages,
+      firstProviderModel,
+      req.body.tools,
+      req.body.response_format
+    );
 
-    moderationRequest.max_tokens = 100;
-
-    console.log('Moderation Request:', moderationRequest); // 添加日志
+    console.log('Moderation Request:', moderationRequest);
 
     const checkResponse = await axios.post(
       firstProviderUrl + '/v1/chat/completions',
@@ -229,23 +286,10 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       throw new Error('Invalid moderation response format');
     }
 
-    // 第二个运营商处理所有消息（包括图片）
-    const secondProviderRequest = {
-      ...req.body,
-      stream: true,
-      tools: req.body.tools || []
-    };
-
-    const response = await axios.post(
-      secondProviderUrl + '/v1/chat/completions',
-      secondProviderRequest,
-      {
-        ...secondProviderConfig,
-        responseType: 'stream'
-      }
-    );
-
+    // 如果审核通过，发送到第二个运营商
+    const response = await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
     response.data.pipe(res);
+
   } catch (error) {
     console.error('Stream handler error:', error);
     const errorResponse = handleError(error);
@@ -257,7 +301,6 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   try {
-    // 提取文本消息
     const textMessages = preprocessMessages(req.body.messages.filter(msg =>
       !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
     ));
@@ -270,7 +313,8 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     const firstProviderConfig = {
       headers: {
         'Authorization': `Bearer ${firstProviderKey}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
       timeout: 45000
     };
@@ -278,25 +322,20 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     const secondProviderConfig = {
       headers: {
         'Authorization': `Bearer ${secondProviderKey}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
       timeout: 60000
     };
 
-    // 第一个运营商处理文本消息
-    const moderationRequest = {
-      messages: moderationMessages,
-      model: firstProviderModel,
-      temperature: 0,
-      response_format: {
-        type: "json_object"
-      },
-      tools: req.body.tools || []
-    };
+    const moderationRequest = createModerationRequest(
+      moderationMessages,
+      firstProviderModel,
+      req.body.tools,
+      req.body.response_format
+    );
 
-    moderationRequest.max_tokens = 100;
-
-    console.log('Moderation Request:', moderationRequest); // 添加日志
+    console.log('Moderation Request:', moderationRequest);
 
     const checkResponse = await axios.post(
       firstProviderUrl + '/v1/chat/completions',
@@ -320,19 +359,9 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       throw new Error('Invalid moderation response format');
     }
 
-    // 第二个运营商处理所有消息（包括图片）
-    const secondProviderRequest = {
-      ...req.body,
-      tools: req.body.tools || []
-    };
-
-    const response = await axios.post(
-      secondProviderUrl + '/v1/chat/completions',
-      secondProviderRequest,
-      secondProviderConfig
-    );
-
+    const response = await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
     res.json(response.data);
+
   } catch (error) {
     console.error('Normal handler error:', error);
     const errorResponse = handleError(error);
@@ -360,7 +389,6 @@ module.exports = async (req, res) => {
     });
   }
 
-  // 验证API访问密钥
   const authKey = req.headers.authorization?.replace('Bearer ', '');
   const validAuthKey = process.env.AUTH_KEY;
 
@@ -384,7 +412,6 @@ module.exports = async (req, res) => {
     });
   }
 
-  // 验证消息格式
   if (!req.body.messages || !Array.isArray(req.body.messages)) {
     return res.status(400).json({
       error: {
@@ -395,23 +422,21 @@ module.exports = async (req, res) => {
     });
   }
 
-  // 修改消息验证部分
   for (const message of req.body.messages) {
     if (!validateMessage(message)) {
-      console.error('Invalid message format:', JSON.stringify(message, null, 2));  // 添加详细日志
+      console.error('Invalid message format:', JSON.stringify(message, null, 2));
       return res.status(400).json({
         error: {
           message: "Invalid message format",
           type: "invalid_request_error",
           code: "invalid_message_format",
           details: "Each message must have a valid role and content",
-          invalidMessage: message  // 添加具体的无效消息信息
+          invalidMessage: message
         }
       });
     }
   }
 
-  // 验证模型
   if (!req.body.model) {
     return res.status(400).json({
       error: {
@@ -422,13 +447,34 @@ module.exports = async (req, res) => {
     });
   }
 
+  // response_format 验证改为可选
+  if (req.body.response_format !== undefined && typeof req.body.response_format !== 'object') {
+    return res.status(400).json({
+      error: {
+        message: "Invalid response_format",
+        type: "invalid_request_error",
+        code: "invalid_response_format"
+      }
+    });
+  }
+
+  // tools 验证改为可选
+  if (req.body.tools !== undefined && !Array.isArray(req.body.tools)) {
+    return res.status(400).json({
+      error: {
+        message: "tools must be an array",
+        type: "invalid_request_error",
+        code: "invalid_tools"
+      }
+    });
+  }
+
   const firstProviderUrl = process.env.FIRST_PROVIDER_URL;
   const secondProviderUrl = process.env.SECOND_PROVIDER_URL;
   const firstProviderModel = process.env.FIRST_PROVIDER_MODEL;
   const firstProviderKey = process.env.FIRST_PROVIDER_KEY;
   const secondProviderKey = process.env.SECOND_PROVIDER_KEY;
 
-  // 检查所有必需的环境变量
   const missingVars = [];
   if (!firstProviderUrl) missingVars.push('FIRST_PROVIDER_URL');
   if (!secondProviderUrl) missingVars.push('SECOND_PROVIDER_URL');
@@ -444,6 +490,27 @@ module.exports = async (req, res) => {
         type: "configuration_error",
         code: "provider_not_configured",
         details: `Missing: ${missingVars.join(', ')}`
+      }
+    });
+  }
+
+  // 验证 URL 格式
+  if (!firstProviderUrl.startsWith('http')) {
+    return res.status(500).json({
+      error: {
+        message: "Invalid first provider URL",
+        type: "configuration_error",
+        code: "invalid_provider_url"
+      }
+    });
+  }
+
+  if (!secondProviderUrl.startsWith('http')) {
+    return res.status(500).json({
+      error: {
+        message: "Invalid second provider URL",
+        type: "configuration_error",
+        code: "invalid_provider_url"
       }
     });
   }
@@ -471,7 +538,18 @@ module.exports = async (req, res) => {
       );
     }
   } catch (error) {
+    console.error('Request handler error:', {
+      message: error.message,
+      stack: error.stack,
+      response: error.response?.data
+    });
     const errorResponse = handleError(error);
-    res.status(errorResponse.error.code).json(errorResponse);
+    if (req.body.stream) {
+      res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } else {
+      res.status(errorResponse.error.code).json(errorResponse);
+    }
   }
 };
