@@ -162,10 +162,13 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    // 提取文本消息
+    // 提取文本消息和图片消息
     const textMessages = preprocessMessages(req.body.messages.filter(msg =>
       !Array.isArray(msg.content) || !msg.content.some(item => item.type === 'image_url')
     ));
+    const imageMessages = req.body.messages.filter(msg =>
+      Array.isArray(msg.content) && msg.content.some(item => item.type === 'image_url')
+    );
 
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
@@ -202,6 +205,8 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
     moderationRequest.max_tokens = 100;
 
+    console.log('Moderation Request:', moderationRequest); // 添加日志
+
     const checkResponse = await axios.post(
       firstProviderUrl + '/v1/chat/completions',
       moderationRequest,
@@ -230,9 +235,12 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     // 第二个运营商处理所有消息（包括图片）
     const secondProviderRequest = {
       ...req.body,
+      messages: [...textMessages, ...imageMessages], // 合并文本和图片消息
       stream: true,
       tools: req.body.tools || []
     };
+
+    console.log('Second Provider Request:', secondProviderRequest); // 添加日志
 
     const response = await axios.post(
       secondProviderUrl + '/v1/chat/completions',
