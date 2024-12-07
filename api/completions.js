@@ -2,16 +2,23 @@
 
 // 处理错误并返回格式化后的错误信息
 function handleError(error) {
-  console.error('Error details:', {
+  // 1. 修改错误日志记录方式
+  const errorDetails = {
     message: error.message,
-    response: error.response?.data,
-    config: {
-      url: error.config?.url,
-      headers: error.config?.headers,
-      data: error.config?.data
-    }
-  });
+    response: error.response?.data ? {
+      status: error.response.status,
+      data: error.response.data
+    } : undefined,
+    config: error.config ? {
+      url: error.config.url,
+      method: error.config.method,
+      // 只保留基本配置信息,移除可能包含循环引用的headers
+    } : undefined
+  };
 
+  console.error('Error details:', errorDetails);
+
+  // 2. 其余逻辑保持不变
   if (error.response) {
     return {
       error: {
@@ -28,7 +35,7 @@ function handleError(error) {
   if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED') {
     return {
       error: {
-        message: "Provider service is unavailable",
+        message: "Provider service is unavailable", 
         type: "connection_error",
         code: 503,
         details: error.message
@@ -46,7 +53,7 @@ function handleError(error) {
   return {
     error: {
       message: sanitizedError.message,
-      type: "internal_error",
+      type: "internal_error", 
       code: 500,
       details: sanitizedError
     }
@@ -572,7 +579,8 @@ module.exports = async (req, res) => {
     console.error('Request handler error:', {
       message: error.message,
       stack: error.stack,
-      response: error.response?.data
+      responseData: error.response?.data ? JSON.stringify(error.response.data) : undefined,
+      // 只记录必要的信息，避免记录整个 error 对象
     });
     const errorResponse = handleError(error);
     if (req.body.stream) {
