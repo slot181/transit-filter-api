@@ -202,6 +202,8 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
     moderationRequest.max_tokens = 100;
 
+    console.log('Moderation Request:', moderationRequest); // 添加日志
+
     const checkResponse = await axios.post(
       firstProviderUrl + '/v1/chat/completions',
       moderationRequest,
@@ -293,6 +295,8 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     };
 
     moderationRequest.max_tokens = 100;
+
+    console.log('Moderation Request:', moderationRequest); // 添加日志
 
     const checkResponse = await axios.post(
       firstProviderUrl + '/v1/chat/completions',
