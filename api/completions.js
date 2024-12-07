@@ -2,30 +2,28 @@
 
 // 处理错误并返回格式化后的错误信息
 function handleError(error) {
-  // 1. 修改错误日志记录方式
-  const errorDetails = {
+  // 创建一个安全的错误对象
+  const safeError = {
     message: error.message,
-    response: error.response?.data ? {
-      status: error.response.status,
-      data: error.response.data
-    } : undefined,
-    config: error.config ? {
-      url: error.config.url,
-      method: error.config.method,
-      // 只保留基本配置信息,移除可能包含循环引用的headers
-    } : undefined
+    type: error.name,
+    code: error.code,
+    status: error.response?.status,
+    statusText: error.response?.statusText,
+    data: error.response?.data?.error || error.response?.data,
+    path: error.config?.url,
+    method: error.config?.method
   };
 
-  console.error('Error details:', errorDetails);
+  console.error('Error details:', safeError);
 
-  // 2. 其余逻辑保持不变
   if (error.response) {
     return {
       error: {
         message: error.response.data?.error?.message || error.message,
         type: "api_error",
         code: error.response.status,
-        provider_error: error.response.data,
+        provider_error: typeof error.response.data === 'object' ?
+          JSON.stringify(error.response.data) : error.response.data,
         path: error.config?.url,
         method: error.config?.method
       }
@@ -35,7 +33,7 @@ function handleError(error) {
   if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED') {
     return {
       error: {
-        message: "Provider service is unavailable", 
+        message: "Provider service is unavailable",
         type: "connection_error",
         code: 503,
         details: error.message
@@ -43,19 +41,16 @@ function handleError(error) {
     };
   }
 
-  const sanitizedError = {
-    message: error.message,
-    stack: error.stack,
-    code: error.code,
-    name: error.name
-  };
-
   return {
     error: {
-      message: sanitizedError.message,
-      type: "internal_error", 
+      message: error.message,
+      type: "internal_error",
       code: 500,
-      details: sanitizedError
+      details: {
+        message: error.message,
+        code: error.code,
+        name: error.name
+      }
     }
   };
 }
@@ -145,13 +140,13 @@ function preprocessMessages(messages) {
         .filter(item => item.type === 'text')
         .map(item => item.text)
         .join('\n');
-      
+
       return {
         role: message.role,
         content: textContent || '' // 如果没有文本则返回空字符串
       };
     }
-    
+
     // 处理字符串内容
     if (typeof message.content === 'string') {
       if (message.content.startsWith('{') || message.content.startsWith('[')) {
@@ -167,7 +162,7 @@ function preprocessMessages(messages) {
       }
       return message;
     }
-    
+
     return message;
   });
 }
@@ -196,7 +191,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
     ...secondProviderRequest,
     messages: secondProviderRequest.messages.map(msg => ({
       ...msg,
-      content: Array.isArray(msg.content) 
+      content: Array.isArray(msg.content)
         ? 'Array content (logged separately)'
         : msg.content
     }))
@@ -218,27 +213,6 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
     secondProviderRequest,
     secondProviderConfig
   );
-}
-
-// 创建审核请求
-function createModerationRequest(messages, model, tools, response_format) {
-  const moderationRequest = {
-    messages: messages,
-    model: model,
-    temperature: 0,
-    max_tokens: 100
-  };
-
-  // 只有在参数存在时才添加
-  if (response_format) {
-    moderationRequest.response_format = response_format;
-  }
-
-  if (tools) {
-    moderationRequest.tools = tools;
-  }
-
-  return moderationRequest;
 }
 
 async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
@@ -284,7 +258,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         type: "json_object"
       }
     };
-    
+
     // 如果请求中包含 tools，则添加
     if (req.body.tools) {
       moderationRequest.tools = req.body.tools;
@@ -322,10 +296,33 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     response.data.pipe(res);
 
   } catch (error) {
-    console.error('Stream handler error:', error);
+    console.error('Stream handler error:', {
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      url: error.config?.url,
+      method: error.config?.method,
+      responseData: error.response?.data ?
+        (typeof error.response.data === 'string' ?
+          error.response.data :
+          JSON.stringify(error.response.data, (key, value) => {
+            if (key === 'socket' || key === 'client' || key === 'req') {
+              return undefined;
+            }
+            return value;
+          })) :
+        undefined,
+      stack: error.stack?.split('\n').slice(0, 3).join('\n')
+    });
+
     const errorResponse = handleError(error);
-    res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
-    res.write('data: [DONE]\n\n');
+    try {
+      res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+      res.write('data: [DONE]\n\n');
+    } catch (writeError) {
+      console.error('Error writing error response:', writeError.message);
+    }
     res.end();
   }
 }
@@ -367,7 +364,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         type: "json_object"
       }
     };
-    
+
     // 如果请求中包含 tools，则添加
     if (req.body.tools) {
       moderationRequest.tools = req.body.tools;
@@ -401,9 +398,39 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     res.json(response.data);
 
   } catch (error) {
-    console.error('Normal handler error:', error);
+    console.error('Normal handler error:', {
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      url: error.config?.url,
+      method: error.config?.method,
+      responseData: error.response?.data ?
+        (typeof error.response.data === 'string' ?
+          error.response.data :
+          JSON.stringify(error.response.data, (key, value) => {
+            if (key === 'socket' || key === 'client' || key === 'req') {
+              return undefined;
+            }
+            return value;
+          })) :
+        undefined,
+      stack: error.stack?.split('\n').slice(0, 3).join('\n')
+    });
+
     const errorResponse = handleError(error);
-    res.status(errorResponse.error.code).json(errorResponse);
+    try {
+      res.status(errorResponse.error.code).json(errorResponse);
+    } catch (writeError) {
+      console.error('Error sending error response:', writeError.message);
+      res.status(500).json({
+        error: {
+          message: "Internal server error",
+          type: "internal_error",
+          code: 500
+        }
+      });
+    }
   }
 }
 
