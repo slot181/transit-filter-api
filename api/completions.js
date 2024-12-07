@@ -1,68 +1,13 @@
 // completions.js
 
-// 处理错误并返回格式化后的错误信息
-function handleError(error) {
-  // 创建一个安全的错误对象
-  const safeError = {
-    message: error.message,
-    type: error.name,
-    code: error.code,
-    status: error.response?.status,
-    statusText: error.response?.statusText,
-    data: error.response?.data?.error || error.response?.data,
-    path: error.config?.url,
-    method: error.config?.method
-  };
-
-  console.error('Error details:', safeError);
-
-  if (error.response) {
-    return {
-      error: {
-        message: error.response.data?.error?.message || error.message,
-        type: "api_error",
-        code: error.response.status,
-        provider_error: typeof error.response.data === 'object' ?
-          JSON.stringify(error.response.data) : error.response.data,
-        path: error.config?.url,
-        method: error.config?.method
-      }
-    };
-  }
-
-  if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED') {
-    return {
-      error: {
-        message: "Provider service is unavailable",
-        type: "connection_error",
-        code: 503,
-        details: error.message
-      }
-    };
-  }
-
-  return {
-    error: {
-      message: error.message,
-      type: "internal_error",
-      code: 500,
-      details: {
-        message: error.message,
-        code: error.code,
-        name: error.name
-      }
-    }
-  };
-}
-
 const axios = require('axios');
 
-const DEFAULT_SYSTEM_CONTENT = `你是一个内容审核助手,负责对文本和图片内容进行安全合规审核。你需要重点识别和判断以下违规内容:
+const DEFAULT_SYSTEM_CONTENT = `你是一个内容审核助手，负责对文本和图片内容进行安全合规审核。你需要重点识别和判断以下违规内容：
 - 色情和暴露内容
 - 恐怖暴力内容
-- 违法违规内容(如毒品、赌博等)
+- 违法违规内容（如毒品、赌博等）
 # OBJECTIVE #
-对用户提交的文本或图片进行内容安全审查,检测是否包含色情、暴力、违法等违规内容,并输出布尔类型的审核结果。
+对用户提交的文本或图片进行内容安全审查，检测是否包含色情、暴力、违法等违规内容，并输出布尔类型的审核结果。
 如果消息中包含图片，请仔细分析图片内容。
 # STYLE #
 - 简洁的
@@ -72,9 +17,9 @@ const DEFAULT_SYSTEM_CONTENT = `你是一个内容审核助手,负责对文本�
 - 严格的
 - 客观的
 # RESPONSE #
-请仅返回如下JSON格式:
+请仅返回如下JSON格式：
 {
-    "isViolation": false  // 含有色情/暴力/违法内容返回true,否则返回false
+    "isViolation": false  // 含有色情/暴力/违法内容返回true，否则返回false
 }`;
 
 function validateMessage(message) {
@@ -167,6 +112,21 @@ function preprocessMessages(messages) {
   });
 }
 
+// 处理错误并返回格式化后的错误信息
+function handleError(error) {
+  // 仅记录错误消息
+  console.error('Error:', error.message);
+
+  // 返回简化的错误响应
+  return {
+    error: {
+      message: error.message || 'An error occurred.',
+      type: error.name || 'Error',
+      code: error.code || 500,
+    }
+  };
+}
+
 // 发送到第二个运营商的请求处理
 async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
   // 构造基础请求
@@ -187,15 +147,15 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
     secondProviderRequest.tools = req.body.tools;
   }
 
-  console.log('Second provider request:', JSON.stringify({
+  console.log('Second provider request:', {
     ...secondProviderRequest,
     messages: secondProviderRequest.messages.map(msg => ({
       ...msg,
       content: Array.isArray(msg.content)
-        ? 'Array content (logged separately)'
+        ? 'Array content (not displayed)'
         : msg.content
     }))
-  }, null, 2));
+  });
 
   if (req.body.stream) {
     return await axios.post(
@@ -215,6 +175,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
   );
 }
 
+// 处理流式响应的函数
 async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -287,7 +248,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         return;
       }
     } catch (parseError) {
-      console.error('Moderation parsing error:', parseError);
+      console.error('Moderation parsing error:', parseError.message);
       throw new Error('Invalid moderation response format');
     }
 
@@ -296,26 +257,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     response.data.pipe(res);
 
   } catch (error) {
-    console.error('Stream handler error:', {
-      message: error.message,
-      code: error.code,
-      status: error.response?.status,
-      statusText: error.response?.statusText,
-      url: error.config?.url,
-      method: error.config?.method,
-      responseData: error.response?.data ?
-        (typeof error.response.data === 'string' ?
-          error.response.data :
-          JSON.stringify(error.response.data, (key, value) => {
-            if (key === 'socket' || key === 'client' || key === 'req') {
-              return undefined;
-            }
-            return value;
-          })) :
-        undefined,
-      stack: error.stack?.split('\n').slice(0, 3).join('\n')
-    });
-
+    console.error('Stream handler error:', error.message);
     const errorResponse = handleError(error);
     try {
       res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
@@ -327,6 +269,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
   }
 }
 
+// 处理非流式响应的函数
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   try {
     const textMessages = preprocessMessages(req.body.messages);
@@ -390,7 +333,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         });
       }
     } catch (parseError) {
-      console.error('Moderation parsing error:', parseError);
+      console.error('Moderation parsing error:', parseError.message);
       throw new Error('Invalid moderation response format');
     }
 
@@ -398,29 +341,10 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     res.json(response.data);
 
   } catch (error) {
-    console.error('Normal handler error:', {
-      message: error.message,
-      code: error.code,
-      status: error.response?.status,
-      statusText: error.response?.statusText,
-      url: error.config?.url,
-      method: error.config?.method,
-      responseData: error.response?.data ?
-        (typeof error.response.data === 'string' ?
-          error.response.data :
-          JSON.stringify(error.response.data, (key, value) => {
-            if (key === 'socket' || key === 'client' || key === 'req') {
-              return undefined;
-            }
-            return value;
-          })) :
-        undefined,
-      stack: error.stack?.split('\n').slice(0, 3).join('\n')
-    });
-
+    console.error('Normal handler error:', error.message);
     const errorResponse = handleError(error);
     try {
-      res.status(errorResponse.error.code).json(errorResponse);
+      res.status(errorResponse.error.code || 500).json(errorResponse);
     } catch (writeError) {
       console.error('Error sending error response:', writeError.message);
       res.status(500).json({
@@ -489,14 +413,13 @@ module.exports = async (req, res) => {
 
   for (const message of req.body.messages) {
     if (!validateMessage(message)) {
-      console.error('Invalid message format:', JSON.stringify(message, null, 2));
+      console.error('Invalid message format');
       return res.status(400).json({
         error: {
           message: "Invalid message format",
           type: "invalid_request_error",
           code: "invalid_message_format",
-          details: "Each message must have a valid role and content",
-          invalidMessage: message
+          details: "Each message must have a valid role and content"
         }
       });
     }
@@ -603,19 +526,14 @@ module.exports = async (req, res) => {
       );
     }
   } catch (error) {
-    console.error('Request handler error:', {
-      message: error.message,
-      stack: error.stack,
-      responseData: error.response?.data ? JSON.stringify(error.response.data) : undefined,
-      // 只记录必要的信息，避免记录整个 error 对象
-    });
+    console.error('Request handler error:', error.message);
     const errorResponse = handleError(error);
     if (req.body.stream) {
       res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
       res.write('data: [DONE]\n\n');
       res.end();
     } else {
-      res.status(errorResponse.error.code).json(errorResponse);
+      res.status(errorResponse.error.code || 500).json(errorResponse);
     }
   }
 };
