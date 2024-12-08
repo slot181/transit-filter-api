@@ -134,7 +134,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
     model: req.body.model,
     messages: req.body.messages,
     stream: req.body.stream || false,
-    temperature: req.body.temperature || 0.7,
+    temperature: req.body.temperature,
     max_tokens: req.body.max_tokens || 2000
   };
 
@@ -185,9 +185,10 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     // 提取文本消息进行审核
     const textMessages = preprocessMessages(req.body.messages);
 
+    // 构建system审核消息
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...textMessages
+      ...textMessages.filter(message => message.role !== "system")
     ];
 
     const firstProviderConfig = {
@@ -274,9 +275,10 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
   try {
     const textMessages = preprocessMessages(req.body.messages);
 
+    // 构建system审核消息
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...textMessages
+      ...textMessages.filter(message => message.role !== "system")
     ];
 
     const firstProviderConfig = {
