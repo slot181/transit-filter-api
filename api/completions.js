@@ -2,25 +2,39 @@
 
 const axios = require('axios');
 
-const DEFAULT_SYSTEM_CONTENT = `你是一个内容审核助手，负责对文本和图片内容进行安全合规审核。你需要重点识别和判断以下违规内容：
-- 色情和暴露内容
-- 恐怖暴力内容
-- 违法违规内容（如毒品、赌博等）
+const DEFAULT_SYSTEM_CONTENT = `
+# CONTEXT #
+你是一位资深的内容安全审核专家,拥有丰富的内容审核经验,需要严格按照平台内容安全规范进行专业审核。你需要以严谨的态度对所有内容进行安全合规把关,重点识别和判断以下违规内容:
+- 色情和暴露内容(包括但不限于裸露、性暗示等)
+- 恐怖暴力内容(包括但不限于血腥、暴力等)
+- 违法违规内容(包括但不限于毒品、赌博、诈骗等)
+- 其他可能违反法律法规的内容
+
 # OBJECTIVE #
-对用户提交的文本或图片进行内容安全审查，检测是否包含色情、暴力、违法等违规内容，并输出布尔类型的审核结果。
-如果消息中包含图片，请仔细分析图片内容。
+作为专业的内容安全审核员,你需要:
+1. 对提交的所有文本进行严格的安全合规审查
+2. 基于内容安全审核标准进行多维度违规识别
+3. 输出准确的布尔类型审核结果
+
 # STYLE #
-- 简洁的
-- 直接的
-- 标准JSON格式
+- 专业的审核视角
+- 严格的审核标准  
+- 规范的输出格式
+
 # TONE #
-- 严格的
-- 客观的
+- 严肃专业
+- 客观公正
+- 不带感情色彩
+
 # RESPONSE #
-请仅返回如下JSON格式：
+必须按照以下JSON格式严格输出审核结果:
 {
-    "isViolation": false  // 含有色情/暴力/违法内容返回true，否则返回false
-}`;
+    "isViolation": false,  // 若检测到任何违规内容则返回true,否则返回false
+}
+
+任何非JSON格式的额外说明都不允许输出。
+必须只有一个参数，且参数名为"isViolation"，且值为布尔类型。
+`;
 
 function validateMessage(message) {
   if (!message.role || typeof message.role !== 'string') {
@@ -185,10 +199,11 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     // 提取文本消息进行审核
     const textMessages = preprocessMessages(req.body.messages);
 
-    // 构建system审核消息
+    // 构建审核消息
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...textMessages.filter(message => message.role !== "system")
+      ...textMessages.filter(message => message.role !== "system"),
+      { role: "user", content: DEFAULT_SYSTEM_CONTENT } // 新增的用户消息
     ];
 
     const firstProviderConfig = {
@@ -215,7 +230,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       model: firstProviderModel,
       temperature: 0,
       max_tokens: 100,
-      // 默认使用 json_object 格式
+      // 强制审核模型使用 json_object 格式输出
       response_format: {
         type: "json_object"
       }
@@ -275,10 +290,11 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
   try {
     const textMessages = preprocessMessages(req.body.messages);
 
-    // 构建system审核消息
+    // 构建审核消息
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...textMessages.filter(message => message.role !== "system")
+      ...textMessages.filter(message => message.role !== "system"),
+      { role: "user", content: DEFAULT_SYSTEM_CONTENT } // 新增的用户消息
     ];
 
     const firstProviderConfig = {
@@ -304,7 +320,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       model: firstProviderModel,
       temperature: 0,
       max_tokens: 100,
-      // 默认使用 json_object 格式
+      // 强制审核模型使用 json_object 格式输出
       response_format: {
         type: "json_object"
       }
