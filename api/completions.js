@@ -236,11 +236,6 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       }
     };
 
-    // 如果请求中包含 tools，则添加
-    if (req.body.tools) {
-      moderationRequest.tools = req.body.tools;
-    }
-
     console.log('Moderation Request:', moderationRequest);
 
     const checkResponse = await axios.post(
@@ -325,11 +320,6 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         type: "json_object"
       }
     };
-
-    // 如果请求中包含 tools，则添加
-    if (req.body.tools) {
-      moderationRequest.tools = req.body.tools;
-    }
 
     console.log('Moderation Request:', moderationRequest);
 
