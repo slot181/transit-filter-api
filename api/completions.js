@@ -267,6 +267,46 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
   return await retryRequest(makeRequest, MAX_RETRY_TIME);
 }
 
+async function performModeration(messages, firstProviderUrl, firstProviderModel, firstProviderConfig) {
+  const moderationMessages = [
+    { role: "system", content: DEFAULT_SYSTEM_CONTENT },
+    ...messages,
+    { role: "user", content: "请根据上述审核规范对全部消息内容进行安全审查" }
+  ];
+
+  const moderationRequest = {
+    messages: moderationMessages,
+    model: firstProviderModel,
+    temperature: 0,
+    max_tokens: 100,
+    response_format: {
+      type: "json_object"
+    }
+  };
+
+  console.log('Moderation Request:', moderationRequest);
+
+  const checkResponse = await axios.post(
+    firstProviderUrl + '/v1/chat/completions',
+    moderationRequest,
+    firstProviderConfig
+  );
+
+  const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
+  if (moderationResult.isViolation === true) {
+    throw {
+      status: 403,
+      error: {
+        message: "检测到违规内容，请修改后重试",
+        type: "content_filter_error",
+        code: "content_violation"
+      }
+    };
+  }
+
+  return true;
+}
+
 // 处理流式响应的函数
 async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -291,16 +331,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
   }, 10000); // 每10秒检查一次
 
   try {
-    // 提取文本消息进行审核
     const textMessages = preprocessMessages(req.body.messages);
-
-    // 构建审核消息
-    const moderationMessages = [
-      { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...textMessages, // 保留所有原始消息
-      { role: "user", content: "请根据上述审核规范对全部消息内容进行安全审查" }
-    ];
-
     const firstProviderConfig = {
       headers: {
         'Authorization': `Bearer ${firstProviderKey}`,
@@ -319,47 +350,33 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       timeout: Math.floor(MAX_RETRY_TIME * 0.5)
     };
 
-    // 创建审核请求
-    const moderationRequest = {
-      messages: moderationMessages,
-      model: firstProviderModel,
-      temperature: 0,
-      max_tokens: 100,
-      // 强制审核模型使用 json_object 格式输出
-      response_format: {
-        type: "json_object"
-      }
-    };
-
-    console.log('Moderation Request:', moderationRequest);
-
-    const checkResponse = await axios.post(
-      firstProviderUrl + '/v1/chat/completions',
-      moderationRequest,
-      firstProviderConfig
-    );
-
+    // 先执行一次审核
+    let moderationPassed = false;
     try {
-      const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
-      if (moderationResult.isViolation === true) {
-        res.write(`data: ${JSON.stringify({
-          error: {
-            message: "检测到违规内容，请修改后重试",
-            type: "content_filter_error",
-            code: "content_violation"
-          }
-        })}\n\n`);
+      await performModeration(textMessages, firstProviderUrl, firstProviderModel, firstProviderConfig);
+      moderationPassed = true;
+    } catch (moderationError) {
+      if (moderationError.error?.code === "content_violation") {
+        res.write(`data: ${JSON.stringify(moderationError)}\n\n`);
         res.write('data: [DONE]\n\n');
         res.end();
         return;
       }
-    } catch (parseError) {
-      console.error('Moderation parsing error:', parseError.message);
-      throw new Error('Invalid moderation response format');
+      throw moderationError;
     }
 
-    // 如果审核通过，发送到第二个运营商
-    const response = await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
+    // 使用重试机制只重试第二个提供商的请求
+    const makeRequest = async () => {
+      if (moderationPassed) {
+        return await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
+      }
+      
+      await performModeration(textMessages, firstProviderUrl, firstProviderModel, firstProviderConfig);
+      moderationPassed = true;
+      return await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
+    };
+
+    const response = await retryRequest(makeRequest, MAX_RETRY_TIME);
     
     // 替换原来的 response.data.pipe(res) 为自定义的流处理
     const stream = response.data;
@@ -401,14 +418,6 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
   try {
     const textMessages = preprocessMessages(req.body.messages);
-
-    // 构建审核消息
-    const moderationMessages = [
-      { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...textMessages, // 保留所有原始消息
-      { role: "user", content: "请根据上述审核规范对全部消息内容进行安全审查" }
-    ];
-
     const firstProviderConfig = {
       headers: {
         'Authorization': `Bearer ${firstProviderKey}`,
@@ -427,42 +436,30 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       timeout: Math.floor(MAX_RETRY_TIME * 0.5)
     };
 
-    const moderationRequest = {
-      messages: moderationMessages,
-      model: firstProviderModel,
-      temperature: 0,
-      max_tokens: 100,
-      // 强制审核模型使用 json_object 格式输出
-      response_format: {
-        type: "json_object"
-      }
-    };
-
-    console.log('Moderation Request:', moderationRequest);
-
-    const checkResponse = await axios.post(
-      firstProviderUrl + '/v1/chat/completions',
-      moderationRequest,
-      firstProviderConfig
-    );
-
+    // 先执行一次审核
+    let moderationPassed = false;
     try {
-      const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
-      if (moderationResult.isViolation === true) {
-        return res.status(403).json({
-          error: {
-            message: "检测到违规内容，请修改后重试",
-            type: "content_filter_error",
-            code: "content_violation"
-          }
-        });
+      await performModeration(textMessages, firstProviderUrl, firstProviderModel, firstProviderConfig);
+      moderationPassed = true;
+    } catch (moderationError) {
+      if (moderationError.error?.code === "content_violation") {
+        return res.status(403).json(moderationError);
       }
-    } catch (parseError) {
-      console.error('Moderation parsing error:', parseError.message);
-      throw new Error('Invalid moderation response format');
+      throw moderationError;
     }
 
-    const response = await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
+    // 如果审核通过，使用重试机制只重试第二个提供商的请求
+    const makeRequest = async () => {
+      if (moderationPassed) {
+        return await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
+      }
+      
+      await performModeration(textMessages, firstProviderUrl, firstProviderModel, firstProviderConfig);
+      moderationPassed = true;
+      return await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
+    };
+
+    const response = await retryRequest(makeRequest, MAX_RETRY_TIME);
     res.json(response.data);
 
   } catch (error) {
