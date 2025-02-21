@@ -370,7 +370,6 @@ module.exports = async (req, res) => {
   }
 
   const authKey = req.headers.authorization?.replace('Bearer ', '');
-  const validAuthKey = process.env.AUTH_KEY;
 
   if (!authKey || authKey !== validAuthKey) {
     return res.status(401).json({
@@ -382,10 +381,11 @@ module.exports = async (req, res) => {
     });
   }
 
+  const validAuthKey = process.env.AUTH_KEY;
   const firstProviderUrl = process.env.FIRST_PROVIDER_URL;
-  const secondProviderUrl = process.env.SECOND_PROVIDER_URL;
-  const firstProviderModel = process.env.FIRST_PROVIDER_MODEL;
   const firstProviderKey = process.env.FIRST_PROVIDER_KEY;
+  const firstProviderModel = process.env.FIRST_PROVIDER_MODEL;
+  const secondProviderUrl = process.env.SECOND_PROVIDER_URL;
   const secondProviderKey = process.env.SECOND_PROVIDER_KEY;
 
   try {
