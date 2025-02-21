@@ -2,9 +2,9 @@
 
 const axios = require('axios');
 
-const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); 
-const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '1000');
-const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '20000'); // 添加流式超时控制，默认1分钟
+const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); // 最大重试时间控制，默认30秒
+const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '1000'); // 重试间隔时间控制，默认1秒
+const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '20000'); // 流式超时控制，默认1分钟
 
 // 添加重试函数
 async function retryRequest(requestFn, maxTime) {
@@ -111,6 +111,28 @@ function preprocessMessages(messages) {
 function handleError(error) {
   console.error('Error:', error.message);
 
+  // 添加最大重试时间超时错误处理
+  if (error.message && error.message.includes('Max retry time')) {
+    return {
+      error: {
+        message: "请求超过最大重试时间限制",
+        type: "max_retry_timeout_error",
+        code: 504
+      }
+    };
+  }
+
+  // 添加流式响应超时错误处理
+  if (error.message && error.message.includes('Stream response timeout')) {
+    return {
+      error: {
+        message: "流式响应超时，请检查网络连接",
+        type: "stream_timeout_error",
+        code: 504
+      }
+    };
+  }
+
   // 重试超时错误
   if (error.message && error.message.includes('retry timeout')) {
     return {
@@ -188,6 +210,8 @@ function translateErrorMessage(message) {
     'Not found': '资源未找到',
     'Unauthorized': '未授权访问',
     'Forbidden': '禁止访问',
+    'Max retry time exceeded': '请求超过最大重试时间',
+    'Stream response timeout': '流式响应超时',
   };
 
   return errorMessages[message] || message;
