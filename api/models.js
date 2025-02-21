@@ -1,37 +1,40 @@
 const axios = require('axios');
 
 function handleError(error) {
-  console.error('Error details:', error);
+  console.error('Error:', error.message);
 
-  if (error.response) {
+  // 优先处理服务商返回的错误结构
+  if (error.response?.data) {
+    const providerError = error.response.data.error || error.response.data;
     return {
       error: {
-        message: error.response.data?.error?.message || error.message,
-        type: "api_error",
-        code: error.response.status,
-        provider_error: error.response.data,
-        path: error.config?.url,
-        method: error.config?.method
+        message: providerError.message || error.message,
+        type: providerError.type || "api_error",
+        code: providerError.code || error.response.status,
+        param: providerError.param,
+        // 保留原始错误信息用于调试
+        provider_details: error.response.data 
       }
     };
   }
 
+  // 处理网络连接类错误
   if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED') {
     return {
       error: {
-        message: "Provider service is unavailable",
+        message: "服务暂时不可用，请稍后重试",
         type: "connection_error",
-        code: 503,
-        details: error.message
+        code: 503
       }
     };
   }
 
+  // 通用错误格式
   return {
     error: {
-      message: error.message,
+      message: error.message || '服务器内部错误',
       type: "internal_error",
-      code: 500
+      code: error.status || 500
     }
   };
 }
@@ -82,6 +85,10 @@ module.exports = async (req, res) => {
     res.json(response.data);
   } catch (error) {
     const errorResponse = handleError(error);
-    res.status(errorResponse.error.code).json(errorResponse);
+    res.status(
+      errorResponse.error.code >= 400 && errorResponse.error.code < 600 
+        ? errorResponse.error.code 
+        : 500
+    ).json(errorResponse);
   }
 };

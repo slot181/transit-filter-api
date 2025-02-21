@@ -94,6 +94,10 @@ module.exports = async (req, res) => {
   } catch (error) {
     console.error('Audio transcription error:', error);
     const errorResponse = handleError(error);
-    res.status(errorResponse.error.code).json(errorResponse);
+    res.status(
+      errorResponse.error.code >= 400 && errorResponse.error.code < 600 
+        ? errorResponse.error.code 
+        : 500
+    ).json(errorResponse);
   }
 };
