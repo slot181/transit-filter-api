@@ -202,8 +202,8 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     // 构建审核消息
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...textMessages.filter(message => message.role !== "system"),
-      { role: "user", content: DEFAULT_SYSTEM_CONTENT } // 新增的用户消息
+      ...textMessages, // 保留所有原始消息
+      { role: "user", content: "请根据上述审核规范对全部消息内容进行安全审查" }
     ];
 
     const firstProviderConfig = {
@@ -288,8 +288,8 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     // 构建审核消息
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...textMessages.filter(message => message.role !== "system"),
-      { role: "user", content: DEFAULT_SYSTEM_CONTENT } // 新增的用户消息
+      ...textMessages, // 保留所有原始消息
+      { role: "user", content: "请根据上述审核规范对全部消息内容进行安全审查" }
     ];
 
     const firstProviderConfig = {
