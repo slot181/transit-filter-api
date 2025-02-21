@@ -2,6 +2,27 @@
 
 const axios = require('axios');
 
+const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); 
+const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '2000');
+
+// 添加重试函数
+async function retryRequest(requestFn, maxTime) {
+  const startTime = Date.now();
+  let lastError = null;
+  
+  while (Date.now() - startTime < maxTime) {
+    try {
+      return await requestFn();
+    } catch (error) {
+      lastError = error;
+      console.log(`Request failed, retrying in ${RETRY_DELAY}ms...`, error.message);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+    }
+  }
+  
+  throw lastError; // 超时后抛出最后一次错误
+}
+
 const DEFAULT_SYSTEM_CONTENT = `
 # CONTEXT #
 你是一位资深的内容安全审核专家,拥有丰富的内容审核经验,需要严格按照平台内容安全规范进行专业审核。你需要以严谨的态度对所有内容进行安全合规把关,重点识别和判断以下违规内容:
@@ -76,34 +97,45 @@ function preprocessMessages(messages) {
 function handleError(error) {
   console.error('Error:', error.message);
 
-  // 优先处理服务商返回的错误结构
-  if (error.response?.data) {
-    const providerError = error.response.data.error || error.response.data;
+  // 重试超时错误
+  if (error.message && error.message.includes('retry timeout')) {
     return {
       error: {
-        message: providerError.message || error.message,
-        type: providerError.type || "api_error",
-        code: providerError.code || error.response.status,
-        param: providerError.param,
-        // 保留原始错误信息用于调试
-        provider_details: error.response.data 
+        message: "服务暂时不可用，多次重试后仍未成功",
+        type: "retry_timeout_error",
+        code: 503,
+        details: error.message
       }
     };
   }
 
-  // 保留特定自定义错误类型
+  // 服务商返回的错误
+  if (error.response?.data) {
+    const providerError = error.response.data.error || error.response.data;
+    return {
+      error: {
+        message: translateErrorMessage(providerError.message) || "服务调用失败",
+        type: providerError.type || "api_error",
+        code: providerError.code || error.response.status,
+        param: providerError.param,
+        provider_details: error.response.data
+      }
+    };
+  }
+
+  // 认证错误
   const preservedCodes = ['invalid_auth_key', 'content_violation'];
   if (preservedCodes.includes(error.code)) {
     return {
       error: {
-        message: error.message,
+        message: error.code === 'invalid_auth_key' ? "无效的认证密钥" : "内容违规",
         type: error.type || "invalid_request_error",
         code: error.code
       }
     };
   }
 
-  // 处理网络连接类错误
+  // 网络错误
   if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED') {
     return {
       error: {
@@ -114,62 +146,87 @@ function handleError(error) {
     };
   }
 
-  // 通用错误格式
+  // 通用错误
   return {
     error: {
-      message: error.message || '服务器内部错误',
+      message: "服务器内部错误，请稍后重试",
       type: "internal_error",
       code: error.status || 500
     }
   };
 }
 
-// 发送到第二个运营商的请求处理
-async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
-  // 构造基础请求
-  const secondProviderRequest = {
-    model: req.body.model,
-    messages: req.body.messages,
-    stream: req.body.stream || false,
-    temperature: req.body.temperature,
-    max_tokens: req.body.max_tokens || 2000
+// 添加错误消息翻译函数
+function translateErrorMessage(message) {
+  const errorMessages = {
+    'Invalid authentication credentials': '无效的认证凭据',
+    'Rate limit exceeded': '请求频率超限',
+    'The model is overloaded': '模型负载过高，请稍后重试',
+    'The server had an error processing your request': '服务器处理请求时发生错误',
+    'Bad gateway': '网关错误',
+    'Gateway timeout': '网关超时',
+    'Service unavailable': '服务不可用',
+    'Request timeout': '请求超时',
+    'Too many requests': '请求次数过多',
+    'Internal server error': '服务器内部错误',
+    'Content violation detected': '检测到违规内容',
+    'Invalid request': '无效的请求',
+    'Not found': '资源未找到',
+    'Unauthorized': '未授权访问',
+    'Forbidden': '禁止访问',
   };
 
-  // 可选参数按需添加
-  if (req.body.response_format) {
-    secondProviderRequest.response_format = req.body.response_format;
-  }
+  return errorMessages[message] || message;
+}
 
-  if (req.body.tools) {
-    secondProviderRequest.tools = req.body.tools;
-  }
+// 发送到第二个运营商的请求处理
+async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
+  const makeRequest = async () => {
+    const secondProviderRequest = {
+      model: req.body.model,
+      messages: req.body.messages,
+      stream: req.body.stream || false,
+      temperature: req.body.temperature,
+      max_tokens: req.body.max_tokens || 2000
+    };
 
-  console.log('Second provider request:', {
-    ...secondProviderRequest,
-    messages: secondProviderRequest.messages.map(msg => ({
-      ...msg,
-      content: Array.isArray(msg.content)
-        ? 'Array content (not displayed)'
-        : msg.content
-    }))
-  });
+    if (req.body.response_format) {
+      secondProviderRequest.response_format = req.body.response_format;
+    }
 
-  if (req.body.stream) {
+    if (req.body.tools) {
+      secondProviderRequest.tools = req.body.tools;
+    }
+
+    console.log('Second provider request:', {
+      ...secondProviderRequest,
+      messages: secondProviderRequest.messages.map(msg => ({
+        ...msg,
+        content: Array.isArray(msg.content)
+          ? 'Array content (not displayed)'
+          : msg.content
+      }))
+    });
+
+    if (req.body.stream) {
+      return await axios.post(
+        secondProviderUrl + '/v1/chat/completions',
+        secondProviderRequest,
+        {
+          ...secondProviderConfig,
+          responseType: 'stream'
+        }
+      );
+    }
+
     return await axios.post(
       secondProviderUrl + '/v1/chat/completions',
       secondProviderRequest,
-      {
-        ...secondProviderConfig,
-        responseType: 'stream'
-      }
+      secondProviderConfig
     );
-  }
+  };
 
-  return await axios.post(
-    secondProviderUrl + '/v1/chat/completions',
-    secondProviderRequest,
-    secondProviderConfig
-  );
+  return await retryRequest(makeRequest, MAX_RETRY_TIME);
 }
 
 // 处理流式响应的函数
@@ -232,7 +289,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       if (moderationResult.isViolation === true) {
         res.write(`data: ${JSON.stringify({
           error: {
-            message: "Content violation detected",
+            message: "检测到违规内容，请修改后重试",
             type: "content_filter_error",
             code: "content_violation"
           }
@@ -317,7 +374,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       if (moderationResult.isViolation === true) {
         return res.status(403).json({
           error: {
-            message: "Content violation detected",
+            message: "检测到违规内容，请修改后重试",
             type: "content_filter_error",
             code: "content_violation"
           }
@@ -362,7 +419,7 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({
       error: {
-        message: "Method not allowed",
+        message: "不支持的请求方法",
         type: "invalid_request_error",
         code: 405
       }
@@ -375,7 +432,7 @@ module.exports = async (req, res) => {
   if (!authKey || authKey !== validAuthKey) {
     return res.status(401).json({
       error: {
-        message: "Invalid authentication key",
+        message: "无效的认证密钥",
         type: "invalid_request_error",
         code: "invalid_auth_key"
       }
