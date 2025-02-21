@@ -5,10 +5,6 @@
       "maxDuration": 60
     }
   },
-  "env": {
-    "MAX_RETRY_TIME": "30000",
-    "RETRY_DELAY": "2000"
-  },
   "routes": [
     {
       "src": "/v1/chat/completions",

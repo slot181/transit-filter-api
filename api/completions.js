@@ -4,6 +4,7 @@ const axios = require('axios');
 
 const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); 
 const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '2000');
+const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 添加流式超时控制，默认1分钟
 
 // 添加重试函数
 async function retryRequest(requestFn, maxTime) {
@@ -235,6 +236,23 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
+  // 添加流式数据超时控制
+  let lastDataTime = Date.now();
+  const checkInterval = setInterval(() => {
+    if (Date.now() - lastDataTime > STREAM_TIMEOUT) {
+      clearInterval(checkInterval);
+      res.write(`data: ${JSON.stringify({
+        error: {
+          message: "流式响应超时，数据传输过慢",
+          type: "stream_timeout_error",
+          code: 504
+        }
+      })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
+  }, 10000); // 每10秒检查一次
+
   try {
     // 提取文本消息进行审核
     const textMessages = preprocessMessages(req.body.messages);
@@ -252,7 +270,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: 45000
+      timeout: Math.floor(RETRY_DELAY * 0.8)
     };
 
     const secondProviderConfig = {
@@ -261,7 +279,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: 60000
+      timeout: Math.floor(RETRY_DELAY * 0.8)
     };
 
     // 创建审核请求
@@ -305,9 +323,31 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
     // 如果审核通过，发送到第二个运营商
     const response = await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
-    response.data.pipe(res);
+    
+    // 替换原来的 response.data.pipe(res) 为自定义的流处理
+    const stream = response.data;
+    
+    stream.on('data', (chunk) => {
+      lastDataTime = Date.now(); // 更新最后收到数据的时间
+      res.write(chunk);
+    });
+
+    stream.on('end', () => {
+      clearInterval(checkInterval);
+      res.end();
+    });
+
+    stream.on('error', (error) => {
+      clearInterval(checkInterval);
+      console.error('Stream error:', error);
+      const errorResponse = handleError(error);
+      res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
 
   } catch (error) {
+    clearInterval(checkInterval);
     console.error('Stream handler error:', error.message);
     const errorResponse = handleError(error);
     try {
@@ -338,7 +378,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: 45000
+      timeout: Math.floor(RETRY_DELAY * 0.8)
     };
 
     const secondProviderConfig = {
@@ -347,7 +387,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: 60000
+      timeout: Math.floor(RETRY_DELAY * 0.8)
     };
 
     const moderationRequest = {
