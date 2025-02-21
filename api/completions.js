@@ -270,7 +270,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(RETRY_DELAY * 0.8)
+      timeout: Math.floor(MAX_RETRY_TIME * 0.8)
     };
 
     const secondProviderConfig = {
@@ -279,7 +279,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(RETRY_DELAY * 0.8)
+      timeout: Math.floor(MAX_RETRY_TIME * 0.8)
     };
 
     // 创建审核请求
@@ -378,7 +378,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(RETRY_DELAY * 0.8)
+      timeout: Math.floor(MAX_RETRY_TIME * 0.8)
     };
 
     const secondProviderConfig = {
@@ -387,7 +387,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(RETRY_DELAY * 0.8)
+      timeout: Math.floor(MAX_RETRY_TIME * 0.8)
     };
 
     const moderationRequest = {
