@@ -36,60 +36,6 @@ const DEFAULT_SYSTEM_CONTENT = `
 必须只有一个参数，且参数名为"isViolation"，且值为布尔类型。
 `;
 
-function validateMessage(message) {
-  if (!message.role || typeof message.role !== 'string') {
-    return false;
-  }
-  if (!message.content) {
-    return false;
-  }
-
-  if (Array.isArray(message.content)) {
-    return message.content.every(item => {
-      if (item.type === 'text') {
-        return typeof item.text === 'string';
-      }
-      if (item.type === 'image_url') {
-        if (typeof item.image_url === 'string') {
-          if (!item.image_url.match(/^https?:\/\/.+/)) {
-            return false;
-          }
-          if (!item.image_url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
-            return false;
-          }
-          return true;
-        } else if (typeof item.image_url === 'object' && typeof item.image_url.url === 'string') {
-          const url = item.image_url.url;
-          if (url.startsWith('data:image/') && url.includes(';base64,')) {
-            return true;
-          }
-          if (!url.match(/^https?:\/\/.+/)) {
-            return false;
-          }
-          if (!url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
-            return false;
-          }
-          return true;
-        }
-        return false;
-      }
-      return false;
-    });
-  }
-
-  if (typeof message.content === 'string') {
-    if (message.content.startsWith('{') || message.content.startsWith('[')) {
-      try {
-        JSON.parse(message.content);
-        return true;
-      } catch (e) {
-      }
-    }
-    return true;
-  }
-
-  return false;
-}
 
 function preprocessMessages(messages) {
   return messages.map(message => {
@@ -128,15 +74,36 @@ function preprocessMessages(messages) {
 
 // 处理错误并返回格式化后的错误信息
 function handleError(error) {
-  // 仅记录错误消息
   console.error('Error:', error.message);
 
-  // 返回简化的错误响应
+  // 优先使用服务商返回的错误信息
+  if (error.response?.data?.error) {
+    return {
+      error: {
+        ...error.response.data.error,
+        code: error.response.data.error.code || error.response.status
+      }
+    };
+  }
+
+  // 保留特定自定义错误类型
+  const preservedCodes = ['invalid_auth_key', 'content_violation'];
+  if (preservedCodes.includes(error.code)) {
+    return {
+      error: {
+        message: error.message,
+        type: error.type || "invalid_request_error",
+        code: error.code
+      }
+    };
+  }
+
+  // 通用错误格式
   return {
     error: {
       message: error.message || 'An error occurred.',
-      type: error.name || 'Error',
-      code: error.code || 500,
+      type: "internal_error",
+      code: 500
     }
   };
 }
@@ -399,117 +366,11 @@ module.exports = async (req, res) => {
     });
   }
 
-  if (!req.body || typeof req.body !== 'object') {
-    return res.status(400).json({
-      error: {
-        message: "Invalid request body",
-        type: "invalid_request_error",
-        code: "invalid_body"
-      }
-    });
-  }
-
-  if (!req.body.messages || !Array.isArray(req.body.messages)) {
-    return res.status(400).json({
-      error: {
-        message: "messages is required and must be an array",
-        type: "invalid_request_error",
-        code: "invalid_messages"
-      }
-    });
-  }
-
-  for (const message of req.body.messages) {
-    if (!validateMessage(message)) {
-      console.error('Invalid message format');
-      return res.status(400).json({
-        error: {
-          message: "Invalid message format",
-          type: "invalid_request_error",
-          code: "invalid_message_format",
-          details: "Each message must have a valid role and content"
-        }
-      });
-    }
-  }
-
-  if (!req.body.model) {
-    return res.status(400).json({
-      error: {
-        message: "model is required",
-        type: "invalid_request_error",
-        code: "invalid_model"
-      }
-    });
-  }
-
-  // response_format 验证改为可选
-  if (req.body.response_format !== undefined && typeof req.body.response_format !== 'object') {
-    return res.status(400).json({
-      error: {
-        message: "Invalid response_format",
-        type: "invalid_request_error",
-        code: "invalid_response_format"
-      }
-    });
-  }
-
-  // tools 验证改为可选
-  if (req.body.tools !== undefined && !Array.isArray(req.body.tools)) {
-    return res.status(400).json({
-      error: {
-        message: "tools must be an array",
-        type: "invalid_request_error",
-        code: "invalid_tools"
-      }
-    });
-  }
-
   const firstProviderUrl = process.env.FIRST_PROVIDER_URL;
   const secondProviderUrl = process.env.SECOND_PROVIDER_URL;
   const firstProviderModel = process.env.FIRST_PROVIDER_MODEL;
   const firstProviderKey = process.env.FIRST_PROVIDER_KEY;
   const secondProviderKey = process.env.SECOND_PROVIDER_KEY;
-
-  const missingVars = [];
-  if (!firstProviderUrl) missingVars.push('FIRST_PROVIDER_URL');
-  if (!secondProviderUrl) missingVars.push('SECOND_PROVIDER_URL');
-  if (!firstProviderModel) missingVars.push('FIRST_PROVIDER_MODEL');
-  if (!firstProviderKey) missingVars.push('FIRST_PROVIDER_KEY');
-  if (!secondProviderKey) missingVars.push('SECOND_PROVIDER_KEY');
-  if (!validAuthKey) missingVars.push('AUTH_KEY');
-
-  if (missingVars.length > 0) {
-    return res.status(500).json({
-      error: {
-        message: "Missing required environment variables",
-        type: "configuration_error",
-        code: "provider_not_configured",
-        details: `Missing: ${missingVars.join(', ')}`
-      }
-    });
-  }
-
-  // 验证 URL 格式
-  if (!firstProviderUrl.startsWith('http')) {
-    return res.status(500).json({
-      error: {
-        message: "Invalid first provider URL",
-        type: "configuration_error",
-        code: "invalid_provider_url"
-      }
-    });
-  }
-
-  if (!secondProviderUrl.startsWith('http')) {
-    return res.status(500).json({
-      error: {
-        message: "Invalid second provider URL",
-        type: "configuration_error",
-        code: "invalid_provider_url"
-      }
-    });
-  }
 
   try {
     if (req.body.stream) {
