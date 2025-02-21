@@ -3,8 +3,8 @@
 const axios = require('axios');
 
 const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); 
-const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '2000');
-const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 添加流式超时控制，默认1分钟
+const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '1000');
+const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '20000'); // 添加流式超时控制，默认1分钟
 
 // 添加重试函数
 async function retryRequest(requestFn, maxTime) {
@@ -283,7 +283,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(MAX_RETRY_TIME * 0.8)
+      timeout: Math.floor(MAX_RETRY_TIME * 0.5)
     };
 
     const secondProviderConfig = {
@@ -292,7 +292,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(MAX_RETRY_TIME * 0.8)
+      timeout: Math.floor(MAX_RETRY_TIME * 0.5)
     };
 
     // 创建审核请求
@@ -391,7 +391,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(MAX_RETRY_TIME * 0.8)
+      timeout: Math.floor(MAX_RETRY_TIME * 0.5)
     };
 
     const secondProviderConfig = {
@@ -400,7 +400,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(MAX_RETRY_TIME * 0.8)
+      timeout: Math.floor(MAX_RETRY_TIME * 0.5)
     };
 
     const moderationRequest = {
