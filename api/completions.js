@@ -13,15 +13,28 @@ async function retryRequest(requestFn, maxTime) {
   
   while (Date.now() - startTime < maxTime) {
     try {
-      return await requestFn();
+      const response = await requestFn();
+      // 如果请求成功，直接返回结果
+      return response;
     } catch (error) {
       lastError = error;
-      console.log(`Request failed, retrying in ${RETRY_DELAY}ms...`, error.message);
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      // 记录错误信息
+      console.log(`Request failed at ${new Date().toISOString()}, error: ${error.message}`);
+      console.log(`Time elapsed: ${Date.now() - startTime}ms, will retry in ${RETRY_DELAY}ms if within maxTime`);
+      
+      // 检查是否还有足够的重试时间
+      if (Date.now() - startTime + RETRY_DELAY < maxTime) {
+        // 等待重试间隔时间
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      } else {
+        // 如果剩余时间不足以进行下一次重试，直接抛出最后一次错误
+        console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
+        throw lastError;
+      }
     }
   }
   
-  throw lastError; // 超时后抛出最后一次错误
+  throw lastError;
 }
 
 const DEFAULT_SYSTEM_CONTENT = `
