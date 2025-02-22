@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { handleError } = require('./completions');
+const { handleError } = require('./completions.js');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');

@@ -6,58 +6,47 @@ const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); // 最�
 const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '5000'); // 重试间隔时间控制
 const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 流式超时控制
 
-// 添加重试函数
-async function retryRequest(requestFn, maxTime) {
+ // 添加重试函数
+ async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
   let lastError = null;
-  let lastProviderError = null;
-
+  let lastProviderError = null;  // 添加这个变量来保存服务商错误
+  
   while (Date.now() - startTime < maxTime) {
     try {
       const response = await requestFn();
       return response;
     } catch (error) {
-      // 增强错误解析逻辑，保留最后一次有效错误
-      const currentProviderError = error.response?.data?.error || error.response?.data;
-      
       lastError = error;
-      lastProviderError = currentProviderError || lastProviderError; // 关键修改：保留最后一次有效错误
-
+      // 保存服务商的错误信息
+      lastProviderError = error.response?.data?.error || error.response?.data;
+      
       console.log(`Request failed at ${new Date().toISOString()}:`, {
         axiosError: error.message,
         httpStatus: error.response?.status,
-        providerError: currentProviderError,
-        remainingTime: maxTime - (Date.now() - startTime)
+        providerError: lastProviderError,
       });
-
-      const remainingTime = maxTime - (Date.now() - startTime);
-      if (remainingTime > RETRY_DELAY) {
+      
+      if (Date.now() - startTime + RETRY_DELAY < maxTime) {
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       } else {
-        console.log(`Remaining time ${remainingTime}ms < retry delay ${RETRY_DELAY}ms, stopping retries`);
-        break;
+        console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
+        throw {
+          message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功。服务商返回：${lastProviderError?.message || '未知错误'}`,
+          code: 'retry_timeout',
+          lastError: error,
+          providerError: lastProviderError  // 确保传递服务商错误
+        };
       }
     }
   }
-
-  // 确保最终错误信息有效
-  const finalProviderError = lastProviderError || {
-    message: '未知错误',
-    type: 'unknown_error',
-    code: 503
-  };
-
-  throw Object.assign(new Error(
-    `请求重试超时（${maxTime}ms），最后错误：${finalProviderError.message}`
-  ), {
+  
+  throw {
+    message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功。服务商返回：${lastProviderError?.message || '未知错误'}`,
     code: 'retry_timeout',
-    providerError: finalProviderError,
-    originalError: lastError,
-    _debug: {
-      retryCount: Math.floor((Date.now() - startTime) / RETRY_DELAY),
-      lastAttemptTime: new Date().toISOString()
-    }
-  });
+    lastError: lastError,
+    providerError: lastProviderError  // 确保传递服务商错误
+  };
 }
 
 const DEFAULT_SYSTEM_CONTENT = `
@@ -132,47 +121,16 @@ function preprocessMessages(messages) {
 
 // 处理错误并返回格式化后的错误信息
 function handleError(error) {
-  console.error('Full error chain:', JSON.stringify({
-    message: error.message,
-    code: error.code,
-    providerError: error.providerError,
-    originalError: error.originalError ? {
-      message: error.originalError.message,
-      code: error.originalError.code
-    } : null
-  }, null, 2));
+  console.error('Error:', error.message, error.providerError);
 
+  // 添加重试超时错误处理
   if (error.code === 'retry_timeout') {
-    // 递归追溯原始错误
-    const getDeepProviderError = (err) => {
-      if (err.providerError) return err.providerError;
-      if (err.originalError) return getDeepProviderError(err.originalError);
-      return err.response?.data?.error || err.response?.data;
-    };
-
-    const providerError = getDeepProviderError(error) || {};
-
     return {
       error: {
-        message: providerError.message || error.message,
-        type: providerError.type || "retry_timeout_error",
-        code: providerError.code || 503,
-        provider_details: {
-          original_code: providerError.code || null,
-          original_type: providerError.type || null,
-          original_message: providerError.message || null,
-          error_chain: [
-            {
-              from: 'retry_timeout',
-              message: error.message
-            },
-            ...(error.originalError ? [{
-              from: 'original_error',
-              message: error.originalError.message,
-              code: error.originalError.code
-            }] : [])
-          ]
-        }
+        message: error.message, // 这里已经包含了服务商错误信息
+        type: error.providerError?.type || "retry_timeout_error",
+        code: error.providerError?.code || 503,
+        provider_error: error.providerError?.message // 保留原始服务商错误
       }
     };
   }
