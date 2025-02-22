@@ -366,7 +366,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       timeout: Math.floor(MAX_RETRY_TIME * 0.5)
     };
 
-    // 先执行一次审核
+    // 先执行审核
     let moderationPassed = false;
     try {
       await performModeration(textMessages, firstProviderUrl, firstProviderModel, firstProviderConfig);
@@ -381,41 +381,35 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       throw moderationError;
     }
 
-    // 使用重试机制只重试第二个提供商的请求
-    const makeRequest = async () => {
-      if (moderationPassed) {
-        return await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
-      }
+    // 审核通过后，只重试第二个提供商的请求
+    if (moderationPassed) {
+      const response = await retryRequest(
+        () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
+        MAX_RETRY_TIME
+      );
       
-      await performModeration(textMessages, firstProviderUrl, firstProviderModel, firstProviderConfig);
-      moderationPassed = true;
-      return await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
-    };
-
-    const response = await retryRequest(makeRequest, MAX_RETRY_TIME);
+      // 替换原来的 response.data.pipe(res) 为自定义的流处理
+      const stream = response.data;
     
-    // 替换原来的 response.data.pipe(res) 为自定义的流处理
-    const stream = response.data;
-    
-    stream.on('data', (chunk) => {
-      lastDataTime = Date.now(); // 更新最后收到数据的时间
-      res.write(chunk);
-    });
+      stream.on('data', (chunk) => {
+        lastDataTime = Date.now(); // 更新最后收到数据的时间
+        res.write(chunk);
+      });
 
-    stream.on('end', () => {
-      clearInterval(checkInterval);
-      res.end();
-    });
+      stream.on('end', () => {
+        clearInterval(checkInterval);
+        res.end();
+      });
 
-    stream.on('error', (error) => {
-      clearInterval(checkInterval);
-      console.error('Stream error:', error);
-      const errorResponse = handleError(error);
-      res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
-      res.write('data: [DONE]\n\n');
-      res.end();
-    });
-
+      stream.on('error', (error) => {
+        clearInterval(checkInterval);
+        console.error('Stream error:', error);
+        const errorResponse = handleError(error);
+        res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      });
+    }
   } catch (error) {
     clearInterval(checkInterval);
     console.error('Stream handler error:', error.message);
@@ -452,7 +446,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       timeout: Math.floor(MAX_RETRY_TIME * 0.5)
     };
 
-    // 先执行一次审核
+    // 先执行审核
     let moderationPassed = false;
     try {
       await performModeration(textMessages, firstProviderUrl, firstProviderModel, firstProviderConfig);
@@ -464,19 +458,14 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       throw moderationError;
     }
 
-    // 如果审核通过，使用重试机制只重试第二个提供商的请求
-    const makeRequest = async () => {
-      if (moderationPassed) {
-        return await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
-      }
-      
-      await performModeration(textMessages, firstProviderUrl, firstProviderModel, firstProviderConfig);
-      moderationPassed = true;
-      return await sendToSecondProvider(req, secondProviderUrl, secondProviderConfig);
-    };
-
-    const response = await retryRequest(makeRequest, MAX_RETRY_TIME);
-    res.json(response.data);
+    // 审核通过后，只重试第二个提供商的请求
+    if (moderationPassed) {
+      const response = await retryRequest(
+        () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig), 
+        MAX_RETRY_TIME
+      );
+      res.json(response.data);
+    }
 
   } catch (error) {
     console.error('Normal handler error:', error.message);
