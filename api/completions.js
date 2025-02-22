@@ -164,7 +164,7 @@ function handleError(error) {
     const providerError = error.response.data.error || error.response.data;
     return {
       error: {
-        message: translateErrorMessage(providerError.message) || "服务调用失败",
+        message: providerError.message || "服务调用失败",
         type: providerError.type || "api_error",
         code: providerError.code || error.response.status,
         param: providerError.param,
@@ -206,30 +206,6 @@ function handleError(error) {
   };
 }
 
-// 添加错误消息翻译函数
-function translateErrorMessage(message) {
-  const errorMessages = {
-    'Invalid authentication credentials': '无效的认证凭据',
-    'Rate limit exceeded': '请求频率超限',
-    'The model is overloaded': '模型负载过高，请稍后重试',
-    'The server had an error processing your request': '服务器处理请求时发生错误',
-    'Bad gateway': '网关错误',
-    'Gateway timeout': '网关超时',
-    'Service unavailable': '服务不可用',
-    'Request timeout': '请求超时',
-    'Too many requests': '请求次数过多',
-    'Internal server error': '服务器内部错误',
-    'Content violation detected': '检测到违规内容',
-    'Invalid request': '无效的请求',
-    'Not found': '资源未找到',
-    'Unauthorized': '未授权访问',
-    'Forbidden': '禁止访问',
-    'Max retry time exceeded': '请求超过最大重试时间',
-    'Stream response timeout': '流式响应超时',
-  };
-
-  return errorMessages[message] || message;
-}
 
 // 发送到第二个运营商的请求处理
 async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
