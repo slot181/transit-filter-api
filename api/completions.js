@@ -10,7 +10,7 @@ const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 流�
 async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
   let lastError = null;
-  let lastProviderError = null;
+  let lastProviderError = null;  // 添加这个变量来保存服务商错误
   
   while (Date.now() - startTime < maxTime) {
     try {
@@ -18,12 +18,8 @@ async function retryRequest(requestFn, maxTime) {
       return response;
     } catch (error) {
       lastError = error;
-      // 增强错误信息提取逻辑
-      lastProviderError = {
-        message: error.response?.data?.error?.message || error.response?.data?.message || error.message,
-        type: error.response?.data?.error?.type || 'provider_error',
-        code: error.response?.status || error.code || 500
-      };
+      // 保存服务商的错误信息
+      lastProviderError = error.response?.data?.error || error.response?.data;
       
       console.log(`Request failed at ${new Date().toISOString()}:`, {
         axiosError: error.message,
@@ -36,7 +32,7 @@ async function retryRequest(requestFn, maxTime) {
       } else {
         console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
         throw Object.assign(new Error(
-          `请求重试超时（${maxTime}ms），最后错误：${lastProviderError.message}`
+          `请求重试超时（${maxTime}ms），最后错误：${lastProviderError?.message || '未知错误'}`
         ), {
           code: 'retry_timeout',
           providerError: lastProviderError,
@@ -129,7 +125,7 @@ function preprocessMessages(messages) {
 function handleError(error) {
   console.error('Error:', error.message, error.providerError);
 
-  // 重构重试超时错误处理
+  // 重构后的重试超时错误处理
   if (error.code === 'retry_timeout') {
     return {
       error: {
@@ -138,7 +134,8 @@ function handleError(error) {
         code: error.providerError?.code || 503,
         provider_details: {
           original_code: error.providerError?.code,
-          original_type: error.providerError?.type
+          original_type: error.providerError?.type,
+          original_message: error.providerError?.message
         }
       }
     };
