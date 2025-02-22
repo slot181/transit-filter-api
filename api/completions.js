@@ -14,27 +14,30 @@ async function retryRequest(requestFn, maxTime) {
   while (Date.now() - startTime < maxTime) {
     try {
       const response = await requestFn();
-      // 如果请求成功，直接返回结果
       return response;
     } catch (error) {
       lastError = error;
-      // 记录错误信息
       console.log(`Request failed at ${new Date().toISOString()}, error: ${error.message}`);
       console.log(`Time elapsed: ${Date.now() - startTime}ms, will retry in ${RETRY_DELAY}ms if within maxTime`);
       
-      // 检查是否还有足够的重试时间
       if (Date.now() - startTime + RETRY_DELAY < maxTime) {
-        // 等待重试间隔时间
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       } else {
-        // 如果剩余时间不足以进行下一次重试，直接抛出最后一次错误
         console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
-        throw lastError;
+        throw {
+          message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功。最后一次错误：${lastError.message}`,
+          code: 'retry_timeout',
+          lastProviderError: lastError
+        };
       }
     }
   }
   
-  throw lastError;
+  throw {
+    message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功。最后一次错误：${lastError.message}`,
+    code: 'retry_timeout',
+    lastProviderError: lastError
+  };
 }
 
 const DEFAULT_SYSTEM_CONTENT = `
@@ -110,6 +113,19 @@ function preprocessMessages(messages) {
 // 处理错误并返回格式化后的错误信息
 function handleError(error) {
   console.error('Error:', error.message);
+
+  // 添加重试超时错误处理
+  if (error.code === 'retry_timeout') {
+    return {
+      error: {
+        message: "服务暂时不可用，多次重试后仍未成功",
+        type: "retry_timeout_error",
+        code: 503,
+        details: error.message,
+        provider_error: error.lastProviderError?.message
+      }
+    };
+  }
 
   // 添加最大重试时间超时错误处理
   if (error.message && error.message.includes('Max retry time')) {
