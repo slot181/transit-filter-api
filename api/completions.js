@@ -10,6 +10,7 @@ const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '20000'); // 流�
 async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
   let lastError = null;
+  let lastProviderError = null;  // 添加这个变量来保存服务商错误
   
   while (Date.now() - startTime < maxTime) {
     try {
@@ -17,12 +18,12 @@ async function retryRequest(requestFn, maxTime) {
       return response;
     } catch (error) {
       lastError = error;
-      // 保存原始的服务商错误信息
-      const providerError = error.response?.data?.error || error.response?.data;
+      // 保存服务商的错误信息
+      lastProviderError = error.response?.data?.error || error.response?.data;
       
       console.log(`Request failed at ${new Date().toISOString()}, error:`, {
         message: error.message,
-        providerError: providerError
+        providerError: lastProviderError
       });
       
       if (Date.now() - startTime + RETRY_DELAY < maxTime) {
@@ -30,20 +31,20 @@ async function retryRequest(requestFn, maxTime) {
       } else {
         console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
         throw {
-          message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功`,
+          message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功。服务商返回：${lastProviderError?.message || '未知错误'}`,
           code: 'retry_timeout',
           lastError: error,
-          providerError: providerError // 添加原始服务商错误
+          providerError: lastProviderError  // 确保传递服务商错误
         };
       }
     }
   }
   
   throw {
-    message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功`,
+    message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功。服务商返回：${lastProviderError?.message || '未知错误'}`,
     code: 'retry_timeout',
     lastError: lastError,
-    providerError: lastError.response?.data?.error || lastError.response?.data
+    providerError: lastProviderError  // 确保传递服务商错误
   };
 }
 
@@ -172,18 +173,6 @@ function handleError(error) {
     };
   }
 
-  // 重试超时错误
-  if (error.message && error.message.includes('retry timeout')) {
-    return {
-      error: {
-        message: "服务暂时不可用，多次重试后仍未成功",
-        type: "retry_timeout_error",
-        code: 503,
-        details: error.message
-      }
-    };
-  }
-
   // 服务商返回的错误
   if (error.response?.data) {
     const providerError = error.response.data.error || error.response.data;
@@ -264,7 +253,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
       messages: req.body.messages,
       stream: req.body.stream || false,
       temperature: req.body.temperature,
-      max_tokens: req.body.max_tokens || 2000
+      max_tokens: req.body.max_tokens || 4096
     };
 
     if (req.body.response_format) {
