@@ -135,19 +135,6 @@ function handleError(error) {
     };
   }
 
-  // 服务商返回的错误
-  if (error.response?.data?.error) {
-    const providerError = error.response.data.error;
-    return {
-      error: {
-        message: providerError.message,
-        type: providerError.type || "api_error",
-        code: providerError.code || error.response.status,
-        provider_error: providerError
-      }
-    };
-  }
-
   // 添加流式响应超时错误处理
   if (error.message && error.message.includes('Stream response timeout')) {
     return {
