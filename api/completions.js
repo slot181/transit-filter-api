@@ -6,8 +6,8 @@ const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); // 最�
 const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '1000'); // 重试间隔时间控制，默认1秒
 const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '20000'); // 流式超时控制，默认1分钟
 
-// 添加重试函数
-async function retryRequest(requestFn, maxTime) {
+ // 添加重试函数
+ async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
   let lastError = null;
   let lastProviderError = null;  // 添加这个变量来保存服务商错误
@@ -21,9 +21,10 @@ async function retryRequest(requestFn, maxTime) {
       // 保存服务商的错误信息
       lastProviderError = error.response?.data?.error || error.response?.data;
       
-      console.log(`Request failed at ${new Date().toISOString()}, error:`, {
-        message: error.message,
-        providerError: lastProviderError
+      console.log(`Request failed at ${new Date().toISOString()}:`, {
+        axiosError: error.message,
+        httpStatus: error.response?.status,
+        providerError: lastProviderError,
       });
       
       if (Date.now() - startTime + RETRY_DELAY < maxTime) {
@@ -124,27 +125,12 @@ function handleError(error) {
 
   // 添加重试超时错误处理
   if (error.code === 'retry_timeout') {
-    // 如果有服务商的原始错误信息，优先使用
-    if (error.providerError?.message) {
-      return {
-        error: {
-          message: error.providerError.message,
-          type: error.providerError.type || "provider_error",
-          code: error.providerError.code || 503,
-          retry_context: {
-            max_retry_time: MAX_RETRY_TIME,
-            message: error.message
-          }
-        }
-      };
-    }
-    
     return {
       error: {
-        message: "服务暂时不可用，多次重试后仍未成功",
-        type: "retry_timeout_error",
-        code: 503,
-        details: error.message
+        message: error.message, // 这里已经包含了服务商错误信息
+        type: error.providerError?.type || "retry_timeout_error",
+        code: error.providerError?.code || 503,
+        provider_error: error.providerError?.message // 保留原始服务商错误
       }
     };
   }
