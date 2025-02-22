@@ -17,26 +17,33 @@ async function retryRequest(requestFn, maxTime) {
       return response;
     } catch (error) {
       lastError = error;
-      console.log(`Request failed at ${new Date().toISOString()}, error: ${error.message}`);
-      console.log(`Time elapsed: ${Date.now() - startTime}ms, will retry in ${RETRY_DELAY}ms if within maxTime`);
+      // 保存原始的服务商错误信息
+      const providerError = error.response?.data?.error || error.response?.data;
+      
+      console.log(`Request failed at ${new Date().toISOString()}, error:`, {
+        message: error.message,
+        providerError: providerError
+      });
       
       if (Date.now() - startTime + RETRY_DELAY < maxTime) {
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       } else {
         console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
         throw {
-          message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功。最后一次错误：${lastError.message}`,
+          message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功`,
           code: 'retry_timeout',
-          lastProviderError: lastError
+          lastError: error,
+          providerError: providerError // 添加原始服务商错误
         };
       }
     }
   }
   
   throw {
-    message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功。最后一次错误：${lastError.message}`,
+    message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功`,
     code: 'retry_timeout',
-    lastProviderError: lastError
+    lastError: lastError,
+    providerError: lastError.response?.data?.error || lastError.response?.data
   };
 }
 
@@ -112,28 +119,44 @@ function preprocessMessages(messages) {
 
 // 处理错误并返回格式化后的错误信息
 function handleError(error) {
-  console.error('Error:', error.message);
+  console.error('Error:', error.message, error.providerError);
 
   // 添加重试超时错误处理
   if (error.code === 'retry_timeout') {
+    // 如果有服务商的原始错误信息，优先使用
+    if (error.providerError?.message) {
+      return {
+        error: {
+          message: error.providerError.message,
+          type: error.providerError.type || "provider_error",
+          code: error.providerError.code || 503,
+          retry_context: {
+            max_retry_time: MAX_RETRY_TIME,
+            message: error.message
+          }
+        }
+      };
+    }
+    
     return {
       error: {
         message: "服务暂时不可用，多次重试后仍未成功",
         type: "retry_timeout_error",
         code: 503,
-        details: error.message,
-        provider_error: error.lastProviderError?.message
+        details: error.message
       }
     };
   }
 
-  // 添加最大重试时间超时错误处理
-  if (error.message && error.message.includes('Max retry time')) {
+  // 服务商返回的错误
+  if (error.response?.data?.error) {
+    const providerError = error.response.data.error;
     return {
       error: {
-        message: "请求超过最大重试时间限制",
-        type: "max_retry_timeout_error",
-        code: 504
+        message: providerError.message,
+        type: providerError.type || "api_error",
+        code: providerError.code || error.response.status,
+        provider_error: providerError
       }
     };
   }
