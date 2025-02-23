@@ -74,7 +74,9 @@ async function retryRequest(requestFn, maxTime) {
       const nextRetryTime = elapsedTime + RETRY_DELAY;
       
       if (nextRetryTime >= maxTime || retryCount >= MAX_RETRY_COUNT) {
-        console.log(`Max retry ${nextRetryTime >= maxTime ? 'time ' + maxTime + 'ms' : 'count ' + MAX_RETRY_COUNT} reached, stopping retries`);
+        const retryType = nextRetryTime >= maxTime ? 'time limit' : 'count limit';
+        const retryValue = nextRetryTime >= maxTime ? maxTime + 'ms' : MAX_RETRY_COUNT;
+        console.log(`[${requestFn.name || 'Unknown'}] Max retry ${retryType} (${retryValue}) reached, stopping retries`);
         // 优先使用原始错误的类型和错误码
         throw {
           message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
@@ -280,52 +282,48 @@ function translateErrorMessage(message) {
 
 // 发送到第二个运营商的请求处理
 async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
-  const makeRequest = async () => {
-    const secondProviderRequest = {
-      model: req.body.model,
-      messages: req.body.messages,
-      stream: req.body.stream || false,
-      temperature: req.body.temperature,
-      max_tokens: req.body.max_tokens || 4096
-    };
+  const secondProviderRequest = {
+    model: req.body.model,
+    messages: req.body.messages,
+    stream: req.body.stream || false,
+    temperature: req.body.temperature,
+    max_tokens: req.body.max_tokens || 4096
+  };
 
-    if (req.body.response_format) {
-      secondProviderRequest.response_format = req.body.response_format;
-    }
+  if (req.body.response_format) {
+    secondProviderRequest.response_format = req.body.response_format;
+  }
 
-    if (req.body.tools) {
-      secondProviderRequest.tools = req.body.tools;
-    }
+  if (req.body.tools) {
+    secondProviderRequest.tools = req.body.tools;
+  }
 
-    console.log('Second provider request:', {
-      ...secondProviderRequest,
-      messages: secondProviderRequest.messages.map(msg => ({
-        ...msg,
-        content: Array.isArray(msg.content)
-          ? msg.content.map(item => item.type === 'text' ? item.text : '[图片]').join('\n')
-          : msg.content
-      }))
-    });
+  console.log('Second provider request:', {
+    ...secondProviderRequest,
+    messages: secondProviderRequest.messages.map(msg => ({
+      ...msg,
+      content: Array.isArray(msg.content)
+        ? msg.content.map(item => item.type === 'text' ? item.text : '[图片]').join('\n')
+        : msg.content
+    }))
+  });
 
-    if (req.body.stream) {
-      return await axios.post(
-        secondProviderUrl + '/v1/chat/completions',
-        secondProviderRequest,
-        {
-          ...secondProviderConfig,
-          responseType: 'stream'
-        }
-      );
-    }
-
+  if (req.body.stream) {
     return await axios.post(
       secondProviderUrl + '/v1/chat/completions',
       secondProviderRequest,
-      secondProviderConfig
+      {
+        ...secondProviderConfig,
+        responseType: 'stream'
+      }
     );
-  };
+  }
 
-  return await retryRequest(makeRequest, MAX_RETRY_TIME);
+  return await axios.post(
+    secondProviderUrl + '/v1/chat/completions',
+    secondProviderRequest,
+    secondProviderConfig
+  );
 }
 
 async function performModeration(messages, firstProviderUrl, firstProviderModel, firstProviderConfig) {
