@@ -46,11 +46,11 @@ async function retryRequest(requestFn, maxTime) {
       console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
       // 确保在超时时返回完整的错误信息
       throw {
-        message: `服务请求超时，请稍后再试。`,
+        message: `1.服务请求超时，请稍后再试。`,
         code: 'retry_timeout',
         lastError: lastError,
         providerError: lastProviderError || {
-          message: "服务请求超时",
+          message: "1.服务请求超时",
           type: "timeout_error",
           code: 503
         }
@@ -60,11 +60,11 @@ async function retryRequest(requestFn, maxTime) {
   
   // 确保在循环结束时也返回完整的错误信息
   throw {
-    message: `服务请求超时，请稍后再试。`,
+    message: `2.服务请求超时，请稍后再试。`,
     code: 'retry_timeout',
     lastError: lastError,
     providerError: lastProviderError || {
-      message: "服务请求超时", 
+      message: "2.服务请求超时", 
       type: "timeout_error",
       code: 503
     }
