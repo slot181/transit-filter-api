@@ -11,6 +11,7 @@ async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
   let lastError = null;
   let lastProviderError = null;
+  let retryCount = 0;
   
   const tryRequest = async () => {
     try {
@@ -25,7 +26,8 @@ async function retryRequest(requestFn, maxTime) {
         lastProviderError = error.providerError;
       }
       
-      console.log(`Request failed at ${new Date().toISOString()}, error:`, {
+      retryCount++;
+      console.log(`Request failed (attempt ${retryCount}) at ${new Date().toISOString()}, error:`, {
         message: error.message,
         providerError: lastProviderError
       });
@@ -34,23 +36,26 @@ async function retryRequest(requestFn, maxTime) {
     }
   };
   
-  while (Date.now() - startTime < maxTime) {
+  while (true) {
     try {
       return await tryRequest();
     } catch (error) {
-      if (Date.now() - startTime + RETRY_DELAY < maxTime) {
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-        continue;
+      const elapsedTime = Date.now() - startTime;
+      const nextRetryTime = elapsedTime + RETRY_DELAY;
+      
+      if (nextRetryTime >= maxTime) {
+        console.log(`Max retry time ${maxTime}ms reached after ${retryCount} attempts, stopping retries`);
+        throw {
+          message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
+          code: 'retry_timeout',
+          lastError: lastError,
+          providerError: lastProviderError,
+          attempts: retryCount
+        };
       }
       
-      console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
-      // 修改这里的错误抛出方式
-      throw {
-        message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
-        code: 'retry_timeout',
-        lastError: lastError,
-        providerError: lastProviderError
-      };
+      console.log(`Waiting ${RETRY_DELAY}ms before next retry...`);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
     }
   }
 }
