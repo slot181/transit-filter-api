@@ -135,19 +135,20 @@ function handleError(error) {
   // 添加重试超时错误处理
   if (error.code === 'retry_timeout') {
     // 如果有服务商的原始错误信息，优先使用
-    if (error.providerError?.message) {
+    if (error.providerError) {
       return {
         error: {
-          message: error.providerError.message,
+          message: translateErrorMessage(error.providerError.message) || "服务请求超时，请稍后再试",
           type: error.providerError.type || "provider_error",
-          code: error.providerError.code || 503
+          code: error.providerError.code || 503,
+          provider_details: error.providerError
         }
       };
     }
     
     return {
       error: {
-        message: "服务请求超时，请稍后再试。",
+        message: "服务请求超时，请稍后再试",
         type: "retry_timeout_error",
         code: 503,
         details: error.message
