@@ -82,7 +82,8 @@ async function retryRequest(requestFn, maxTime) {
           message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
           type: lastProviderError?.type || ErrorTypes.SERVICE,
           code: lastProviderError?.code || ErrorCodes.RETRY_TIMEOUT,
-          providerError: lastProviderError
+          providerError: lastProviderError,
+          isRetryTimeout: true  // 添加明确的标识
         };
       }
       
@@ -186,8 +187,10 @@ function handleError(error) {
     return "服务器内部错误，请稍后重试";
   };
 
-  // 重试超时错误
-  if (error.code === 'retry_timeout') {
+  // 重试超时错误 - 增强错误识别逻辑
+  if (error.code === ErrorCodes.RETRY_TIMEOUT ||
+      error.isRetryTimeout ||
+      error.providerError?.code === ErrorCodes.RETRY_TIMEOUT) {
     return {
       error: {
         message: translateErrorMessage(getErrorMessage(error)),
