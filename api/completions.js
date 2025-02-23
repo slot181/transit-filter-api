@@ -219,10 +219,14 @@ function handleError(error) {
   }
 
   // one_hub_error 类型错误处理
-  if (error.type === 'one_hub_error' || error.providerError?.type === 'one_hub_error') {
+  if (
+    error.type === 'one_hub_error' ||
+    error.providerError?.type === 'one_hub_error' ||
+    error.response?.data?.type === 'one_hub_error'
+  ) {
     return {
       error: {
-        message: error.message || error.providerError?.message,
+        message: error.message || error.providerError?.message || error.response?.data?.message,
         type: ErrorTypes.API,
         code: ErrorCodes.ONE_HUB_ERROR
       }
