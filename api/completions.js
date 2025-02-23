@@ -18,7 +18,7 @@ const ErrorTypes = {
 
 // 错误码常量
 const ErrorCodes = {
-  MODEL_NOT_FOUND: 'model_not_found',           // 模型不存在
+  ONE_HUB_ERROR: 'one_hub_error',           // 模型不存在
   INVALID_AUTH_KEY: 'invalid_auth_key',         // 无效的认证密钥
   CONTENT_VIOLATION: 'content_violation',        // 内容违规
   RETRY_TIMEOUT: 'retry_timeout',               // 重试超时
@@ -224,7 +224,7 @@ function handleError(error) {
       error: {
         message: error.message || error.providerError?.message,
         type: ErrorTypes.API,
-        code: ErrorCodes.MODEL_NOT_FOUND
+        code: ErrorCodes.ONE_HUB_ERROR
       }
     };
   }
