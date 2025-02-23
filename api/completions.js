@@ -44,13 +44,12 @@ async function retryRequest(requestFn, maxTime) {
       const nextRetryTime = elapsedTime + RETRY_DELAY;
       
       if (nextRetryTime >= maxTime) {
-        console.log(`Max retry time ${maxTime}ms reached after ${retryCount} attempts, stopping retries`);
-        const error = new Error(lastProviderError?.message || `服务请求超时，请稍后再试。`);
-        error.code = 'retry_timeout';
-        error.lastError = lastError;
-        error.providerError = lastProviderError;
-        error.attempts = retryCount;
-        throw error;
+        console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
+        throw {
+          message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
+          code: 'retry_timeout',
+          providerError: lastProviderError
+        };
       }
       
       console.log(`Waiting ${RETRY_DELAY}ms before next retry...`);
@@ -133,65 +132,59 @@ function preprocessMessages(messages) {
 function handleError(error) {
   console.error('Error:', error.message, error.providerError);
 
-  // 添加重试超时错误处理
+  // 重试超时错误
   if (error.code === 'retry_timeout') {
-    // 如果有服务商的原始错误信息，优先使用
     if (error.providerError) {
-      const providerError = error.providerError.error || error.providerError;
       return {
         error: {
-          message: translateErrorMessage(providerError.message) || "服务请求超时，请稍后再试",
-          type: providerError.type || "provider_error",
-          code: providerError.code || 503,
-          provider_details: error.providerError,
-          attempts: error.attempts
+          message: translateErrorMessage(error.providerError.message) || "服务请求超时，请稍后再试",
+          code: error.providerError.code || 503
         }
       };
     }
-    
     return {
       error: {
         message: "服务请求超时，请稍后再试",
-        type: "retry_timeout_error",
-        code: 503,
-        details: error.message,
-        attempts: error.attempts
+        code: 503
       }
     };
   }
 
-  // 添加流式响应超时错误处理
-  if (error.message && error.message.includes('Stream response timeout')) {
-    return {
-      error: {
-        message: "流式响应超时，请检查网络连接",
-        type: "stream_timeout_error",
-        code: 504
-      }
-    };
-  }
-
-  // 服务商返回的错误 - 合并两处重复的错误处理逻辑
+  // 服务商返回的错误
   if (error.response?.data) {
     const providerError = error.response.data.error || error.response.data;
     return {
       error: {
         message: translateErrorMessage(providerError.message) || "服务调用失败",
-        type: providerError.type || "api_error",
-        code: providerError.code || error.response.status,
-        param: providerError.param,
-        provider_details: error.response.data
+        code: providerError.code || error.response.status
+      }
+    };
+  }
+
+  // 流式响应超时
+  if (error.message?.includes('Stream response timeout')) {
+    return {
+      error: {
+        message: "流式响应超时",
+        code: 504
       }
     };
   }
 
   // 认证错误
-  const preservedCodes = ['invalid_auth_key', 'content_violation'];
-  if (preservedCodes.includes(error.code)) {
+  if (error.code === 'invalid_auth_key') {
     return {
       error: {
-        message: error.code === 'invalid_auth_key' ? "无效的认证密钥" : "内容违规",
-        type: error.type || "invalid_request_error",
+        message: "无效的认证密钥",
+        code: error.code
+      }
+    };
+  }
+
+  if (error.code === 'content_violation') {
+    return {
+      error: {
+        message: "内容违规",
         code: error.code
       }
     };
@@ -202,7 +195,6 @@ function handleError(error) {
     return {
       error: {
         message: "服务暂时不可用，请稍后重试",
-        type: "connection_error",
         code: 503
       }
     };
@@ -212,7 +204,6 @@ function handleError(error) {
   return {
     error: {
       message: "服务器内部错误，请稍后重试",
-      type: "internal_error",
       code: error.status || 500
     }
   };
