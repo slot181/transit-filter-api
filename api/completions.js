@@ -42,7 +42,18 @@ async function retryRequest(requestFn, maxTime) {
       lastError = error;
       // 更详细地解析和保存服务商错误
       if (error.response?.data) {
-        lastProviderError = error.response.data.error || error.response.data;
+        // 如果错误信息在 error 字段中
+        if (error.response.data.error) {
+          lastProviderError = error.response.data.error;
+        }
+        // 如果错误信息直接在 data 中
+        else {
+          lastProviderError = {
+            message: error.response.data.message,
+            type: error.response.data.type,
+            code: error.response.data.code
+          };
+        }
       } else if (error.providerError) {
         lastProviderError = error.providerError;
       }
@@ -66,10 +77,11 @@ async function retryRequest(requestFn, maxTime) {
       
       if (nextRetryTime >= maxTime) {
         console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
+        // 优先使用原始错误的类型和错误码
         throw {
           message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
-          type: ErrorTypes.SERVICE,
-          code: ErrorCodes.RETRY_TIMEOUT,
+          type: lastProviderError?.type || ErrorTypes.SERVICE,
+          code: lastProviderError?.code || ErrorCodes.RETRY_TIMEOUT,
           providerError: lastProviderError
         };
       }
