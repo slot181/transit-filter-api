@@ -299,7 +299,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
       messages: secondProviderRequest.messages.map(msg => ({
         ...msg,
         content: Array.isArray(msg.content)
-          ? 'Array content (not displayed)'
+          ? msg.content.map(item => item.type === 'text' ? item.text : '[图片]').join('\n')
           : msg.content
       }))
     });
