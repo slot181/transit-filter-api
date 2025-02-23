@@ -10,41 +10,64 @@ const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 流�
 async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
   let lastError = null;
-  let lastProviderError = null;  // 添加这个变量来保存服务商错误
+  let lastProviderError = null;
   
-  while (Date.now() - startTime < maxTime) {
+  const tryRequest = async () => {
     try {
       const response = await requestFn();
       return response;
     } catch (error) {
       lastError = error;
-      // 保存服务商的错误信息
-      lastProviderError = error.response?.data?.error || error.response?.data;
+      // 更详细地解析和保存服务商错误
+      if (error.response?.data) {
+        lastProviderError = error.response.data.error || error.response.data;
+      } else if (error.providerError) {
+        lastProviderError = error.providerError;
+      }
       
       console.log(`Request failed at ${new Date().toISOString()}, error:`, {
         message: error.message,
         providerError: lastProviderError
       });
       
+      throw error; // 重新抛出错误以便外层捕获
+    }
+  };
+  
+  while (Date.now() - startTime < maxTime) {
+    try {
+      return await tryRequest();
+    } catch (error) {
       if (Date.now() - startTime + RETRY_DELAY < maxTime) {
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-      } else {
-        console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
-        throw {
-          message: `服务请求超时，请稍后再试。`,
-          code: 'retry_timeout',
-          lastError: error,
-          providerError: lastProviderError  // 确保传递服务商错误
-        };
+        continue;
       }
+      
+      console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
+      // 确保在超时时返回完整的错误信息
+      throw {
+        message: `服务请求超时，请稍后再试。`,
+        code: 'retry_timeout',
+        lastError: lastError,
+        providerError: lastProviderError || {
+          message: "服务请求超时",
+          type: "timeout_error",
+          code: 503
+        }
+      };
     }
   }
   
+  // 确保在循环结束时也返回完整的错误信息
   throw {
     message: `服务请求超时，请稍后再试。`,
     code: 'retry_timeout',
     lastError: lastError,
-    providerError: lastProviderError  // 确保传递服务商错误
+    providerError: lastProviderError || {
+      message: "服务请求超时", 
+      type: "timeout_error",
+      code: 503
+    }
   };
 }
 
