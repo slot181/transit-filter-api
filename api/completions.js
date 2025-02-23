@@ -6,6 +6,27 @@ const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); // 最�
 const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '5000'); // 重试间隔时间控制
 const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 流式超时控制
 
+// 错误类型常量
+const ErrorTypes = {
+  INVALID_REQUEST: 'invalid_request_error',    // 请求参数错误
+  AUTHENTICATION: 'authentication_error',       // 认证错误
+  PERMISSION: 'permission_error',              // 权限错误
+  RATE_LIMIT: 'rate_limit_error',             // 频率限制
+  API: 'api_error',                           // API错误
+  SERVICE: 'service_error'                    // 服务错误
+};
+
+// 错误码常量
+const ErrorCodes = {
+  MODEL_NOT_FOUND: 'model_not_found',           // 模型不存在
+  INVALID_AUTH_KEY: 'invalid_auth_key',         // 无效的认证密钥
+  CONTENT_VIOLATION: 'content_violation',        // 内容违规
+  RETRY_TIMEOUT: 'retry_timeout',               // 重试超时
+  STREAM_TIMEOUT: 'stream_timeout',             // 流式响应超时
+  SERVICE_UNAVAILABLE: 'service_unavailable',    // 服务不可用
+  INTERNAL_ERROR: 'internal_error'              // 内部错误
+};
+
 // 添加重试函数
 async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
@@ -47,7 +68,8 @@ async function retryRequest(requestFn, maxTime) {
         console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
         throw {
           message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
-          code: 'retry_timeout',
+          type: ErrorTypes.SERVICE,
+          code: ErrorCodes.RETRY_TIMEOUT,
           providerError: lastProviderError
         };
       }
@@ -152,29 +174,13 @@ function handleError(error) {
     return "服务器内部错误，请稍后重试";
   };
 
-  // 获取错误代码的辅助函数
-  const getErrorCode = (error) => {
-    if (error.code) {
-      return error.code;
-    }
-    if (error.providerError?.code) {
-      return error.providerError.code;
-    }
-    if (error.response?.data?.error?.code) {
-      return error.response.data.error.code;
-    }
-    if (error.response?.status) {
-      return error.response.status;
-    }
-    return 500;
-  };
-
   // 重试超时错误
   if (error.code === 'retry_timeout') {
     return {
       error: {
         message: translateErrorMessage(getErrorMessage(error)),
-        code: getErrorCode(error) || 503
+        type: ErrorTypes.SERVICE,
+        code: ErrorCodes.RETRY_TIMEOUT
       }
     };
   }
@@ -184,7 +190,8 @@ function handleError(error) {
     return {
       error: {
         message: "流式响应超时",
-        code: 504
+        type: ErrorTypes.SERVICE,
+        code: ErrorCodes.STREAM_TIMEOUT
       }
     };
   }
@@ -194,7 +201,8 @@ function handleError(error) {
     return {
       error: {
         message: "无效的认证密钥",
-        code: error.code
+        type: ErrorTypes.AUTHENTICATION,
+        code: ErrorCodes.INVALID_AUTH_KEY
       }
     };
   }
@@ -204,7 +212,19 @@ function handleError(error) {
     return {
       error: {
         message: "内容违规",
-        code: error.code
+        type: ErrorTypes.INVALID_REQUEST,
+        code: ErrorCodes.CONTENT_VIOLATION
+      }
+    };
+  }
+
+  // one_hub_error 类型错误处理
+  if (error.type === 'one_hub_error' || error.providerError?.type === 'one_hub_error') {
+    return {
+      error: {
+        message: error.message || error.providerError?.message,
+        type: ErrorTypes.API,
+        code: ErrorCodes.MODEL_NOT_FOUND
       }
     };
   }
@@ -214,7 +234,8 @@ function handleError(error) {
     return {
       error: {
         message: "服务暂时不可用，请稍后重试",
-        code: 503
+        type: ErrorTypes.SERVICE,
+        code: ErrorCodes.SERVICE_UNAVAILABLE
       }
     };
   }
@@ -223,7 +244,8 @@ function handleError(error) {
   return {
     error: {
       message: translateErrorMessage(getErrorMessage(error)),
-      code: getErrorCode(error)
+      type: ErrorTypes.SERVICE,
+      code: ErrorCodes.INTERNAL_ERROR
     }
   };
 }
@@ -331,11 +353,10 @@ async function performModeration(messages, firstProviderUrl, firstProviderModel,
   const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
   if (moderationResult.isViolation === true) {
     throw {
-      status: 403,
       error: {
         message: "检测到违规内容，请修改后重试",
-        type: "content_filter_error",
-        code: "content_violation"
+        type: ErrorTypes.INVALID_REQUEST,
+        code: ErrorCodes.CONTENT_VIOLATION
       }
     };
   }
@@ -357,8 +378,8 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       res.write(`data: ${JSON.stringify({
         error: {
           message: "流式响应超时，数据传输过慢",
-          type: "stream_timeout_error",
-          code: 504
+          type: ErrorTypes.SERVICE,
+          code: ErrorCodes.STREAM_TIMEOUT
         }
       })}\n\n`);
       res.write('data: [DONE]\n\n');
@@ -496,9 +517,9 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       console.error('Error sending error response:', writeError.message);
       res.status(500).json({
         error: {
-          message: "Internal server error",
-          type: "internal_error",
-          code: 500
+          message: "服务器内部错误",
+          type: ErrorTypes.SERVICE,
+          code: ErrorCodes.INTERNAL_ERROR
         }
       });
     }
@@ -519,8 +540,8 @@ module.exports = async (req, res) => {
     return res.status(405).json({
       error: {
         message: "不支持的请求方法",
-        type: "invalid_request_error",
-        code: 405
+        type: ErrorTypes.INVALID_REQUEST,
+        code: "method_not_allowed"
       }
     });
   }
@@ -532,8 +553,8 @@ module.exports = async (req, res) => {
     return res.status(401).json({
       error: {
         message: "无效的认证密钥",
-        type: "invalid_request_error",
-        code: "invalid_auth_key"
+        type: ErrorTypes.AUTHENTICATION,
+        code: ErrorCodes.INVALID_AUTH_KEY
       }
     });
   }
