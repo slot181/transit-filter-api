@@ -5,6 +5,7 @@ const axios = require('axios');
 const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); // 最大重试时间控制
 const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '5000'); // 重试间隔时间控制
 const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 流式超时控制
+const MAX_RETRY_COUNT = parseInt(process.env.MAX_RETRY_COUNT || '5'); // 最大重试次数控制
 
 // 错误类型常量
 const ErrorTypes = {
@@ -73,8 +74,8 @@ async function retryRequest(requestFn, maxTime) {
       const elapsedTime = Date.now() - startTime;
       const nextRetryTime = elapsedTime + RETRY_DELAY;
       
-      if (nextRetryTime >= maxTime) {
-        console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
+      if (nextRetryTime >= maxTime || retryCount >= MAX_RETRY_COUNT) {
+        console.log(`Max retry ${nextRetryTime >= maxTime ? 'time ' + maxTime + 'ms' : 'count ' + MAX_RETRY_COUNT} reached, stopping retries`);
         // 优先使用原始错误的类型和错误码
         throw {
           message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
@@ -286,6 +287,7 @@ function translateErrorMessage(message) {
     'Unauthorized': '未授权访问',
     'Forbidden': '禁止访问',
     'Max retry time exceeded': '请求超过最大重试时间',
+    'Max retry count exceeded': '请求超过最大重试次数',
     'Stream response timeout': '流式响应超时',
   };
 
