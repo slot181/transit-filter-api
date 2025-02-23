@@ -44,31 +44,18 @@ async function retryRequest(requestFn, maxTime) {
       }
       
       console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
-      // 确保在超时时返回完整的错误信息
       throw {
-        message: `1.服务请求超时，请稍后再试。`,
+        message: `服务请求超时，请稍后再试。`,
         code: 'retry_timeout',
         lastError: lastError,
         providerError: lastProviderError || {
-          message: "1.服务请求超时",
+          message: "服务请求超时",
           type: "timeout_error",
           code: 503
         }
       };
     }
   }
-  
-  // 确保在循环结束时也返回完整的错误信息
-  throw {
-    message: `2.服务请求超时，请稍后再试。`,
-    code: 'retry_timeout',
-    lastError: lastError,
-    providerError: lastProviderError || {
-      message: "2.服务请求超时", 
-      type: "timeout_error",
-      code: 503
-    }
-  };
 }
 
 const DEFAULT_SYSTEM_CONTENT = `
@@ -153,11 +140,7 @@ function handleError(error) {
         error: {
           message: error.providerError.message,
           type: error.providerError.type || "provider_error",
-          code: error.providerError.code || 503,
-          retry_context: {
-            max_retry_time: MAX_RETRY_TIME,
-            message: error.message
-          }
+          code: error.providerError.code || 503
         }
       };
     }
