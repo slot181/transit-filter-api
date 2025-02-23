@@ -132,31 +132,49 @@ function preprocessMessages(messages) {
 function handleError(error) {
   console.error('Error:', error.message, error.providerError);
 
+  // 获取错误消息的辅助函数
+  const getErrorMessage = (error) => {
+    // 直接从错误对象获取消息
+    if (error.message) {
+      return error.message;
+    }
+    // 从 providerError 获取消息
+    if (error.providerError?.message) {
+      return error.providerError.message;
+    }
+    // 从 response.data 获取消息
+    if (error.response?.data?.error?.message) {
+      return error.response.data.error.message;
+    }
+    if (error.response?.data?.message) {
+      return error.response.data.message;
+    }
+    return "服务器内部错误，请稍后重试";
+  };
+
+  // 获取错误代码的辅助函数
+  const getErrorCode = (error) => {
+    if (error.code) {
+      return error.code;
+    }
+    if (error.providerError?.code) {
+      return error.providerError.code;
+    }
+    if (error.response?.data?.error?.code) {
+      return error.response.data.error.code;
+    }
+    if (error.response?.status) {
+      return error.response.status;
+    }
+    return 500;
+  };
+
   // 重试超时错误
   if (error.code === 'retry_timeout') {
-    if (error.providerError) {
-      return {
-        error: {
-          message: translateErrorMessage(error.providerError.message) || "服务请求超时，请稍后再试",
-          code: error.providerError.code || 503
-        }
-      };
-    }
     return {
       error: {
-        message: "服务请求超时，请稍后再试",
-        code: 503
-      }
-    };
-  }
-
-  // 服务商返回的错误
-  if (error.response?.data) {
-    const providerError = error.response.data.error || error.response.data;
-    return {
-      error: {
-        message: translateErrorMessage(providerError.message) || "服务调用失败",
-        code: providerError.code || error.response.status
+        message: translateErrorMessage(getErrorMessage(error)),
+        code: getErrorCode(error) || 503
       }
     };
   }
@@ -181,6 +199,7 @@ function handleError(error) {
     };
   }
 
+  // 内容违规
   if (error.code === 'content_violation') {
     return {
       error: {
@@ -200,11 +219,11 @@ function handleError(error) {
     };
   }
 
-  // 通用错误
+  // 处理其他所有错误
   return {
     error: {
-      message: "服务器内部错误，请稍后重试",
-      code: error.status || 500
+      message: translateErrorMessage(getErrorMessage(error)),
+      code: getErrorCode(error)
     }
   };
 }
