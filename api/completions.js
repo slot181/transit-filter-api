@@ -19,7 +19,6 @@ const ErrorTypes = {
 
 // 错误码常量
 const ErrorCodes = {
-  ONE_HUB_ERROR: 'one_hub_error',           // onehub类型错误
   INVALID_AUTH_KEY: 'invalid_auth_key',         // 无效的认证密钥
   CONTENT_VIOLATION: 'content_violation',        // 内容违规
   RETRY_TIMEOUT: 'retry_timeout',               // 重试超时
@@ -228,21 +227,6 @@ function handleError(error) {
         message: "内容违规",
         type: ErrorTypes.INVALID_REQUEST,
         code: ErrorCodes.CONTENT_VIOLATION
-      }
-    };
-  }
-
-  // one_hub_error 类型错误处理
-  if (
-    error.type === 'one_hub_error' ||
-    error.providerError?.type === 'one_hub_error' ||
-    error.response?.data?.type === 'one_hub_error'
-  ) {
-    return {
-      error: {
-        message: error.message || error.providerError?.message || error.response?.data?.message,
-        type: ErrorTypes.API,
-        code: ErrorCodes.ONE_HUB_ERROR
       }
     };
   }
