@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { handleError } = require('./completions.js');
+const { handleError, ErrorTypes, ErrorCodes } = require('./completions.js');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -14,9 +14,9 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({
       error: {
-        message: "Method not allowed",
-        type: "invalid_request_error",
-        code: 405
+        message: "不支持的请求方法",
+        type: ErrorTypes.INVALID_REQUEST,
+        code: "method_not_allowed"
       }
     });
   }
@@ -27,9 +27,9 @@ module.exports = async (req, res) => {
   if (!authKey || authKey !== validAuthKey) {
     return res.status(401).json({
       error: {
-        message: "Invalid authentication key",
-        type: "invalid_request_error",
-        code: "invalid_auth_key"
+        message: "无效的认证密钥",
+        type: ErrorTypes.AUTHENTICATION,
+        code: ErrorCodes.INVALID_AUTH_KEY
       }
     });
   }
@@ -37,8 +37,8 @@ module.exports = async (req, res) => {
   if (!req.body || typeof req.body !== 'object') {
     return res.status(400).json({
       error: {
-        message: "Invalid request body",
-        type: "invalid_request_error",
+        message: "无效的请求体格式",
+        type: ErrorTypes.INVALID_REQUEST,
         code: "invalid_body"
       }
     });
@@ -48,8 +48,8 @@ module.exports = async (req, res) => {
   if (!audio || typeof audio !== 'string') {
     return res.status(400).json({
       error: {
-        message: "audio is required and must be a string",
-        type: "invalid_request_error",
+        message: "音频参数无效",
+        type: ErrorTypes.INVALID_REQUEST,
         code: "invalid_audio"
       }
     });
@@ -58,8 +58,8 @@ module.exports = async (req, res) => {
   if (!model || typeof model !== 'string') {
     return res.status(400).json({
       error: {
-        message: "model is required and must be a string",
-        type: "invalid_request_error",
+        message: "模型参数无效",
+        type: ErrorTypes.INVALID_REQUEST,
         code: "invalid_model"
       }
     });
@@ -71,9 +71,9 @@ module.exports = async (req, res) => {
   if (!SECOND_PROVIDER_URL || !SECOND_PROVIDER_KEY) {
     return res.status(500).json({
       error: {
-        message: "Second provider configuration is missing",
-        type: "configuration_error",
-        code: "provider_not_configured"
+        message: "服务配置缺失",
+        type: ErrorTypes.SERVICE,
+        code: ErrorCodes.INTERNAL_ERROR
       }
     });
   }
