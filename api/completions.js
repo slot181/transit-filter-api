@@ -30,7 +30,7 @@ async function retryRequest(requestFn, maxTime) {
         providerError: lastProviderError
       });
       
-      throw error; // 重新抛出错误以便外层捕获
+      throw error;
     }
   };
   
@@ -44,15 +44,12 @@ async function retryRequest(requestFn, maxTime) {
       }
       
       console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
+      // 修改这里的错误抛出方式
       throw {
-        message: `服务请求超时，请稍后再试。`,
+        message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
         code: 'retry_timeout',
         lastError: lastError,
-        providerError: lastProviderError || {
-          message: "服务请求超时",
-          type: "timeout_error",
-          code: 503
-        }
+        providerError: lastProviderError
       };
     }
   }
