@@ -45,13 +45,12 @@ async function retryRequest(requestFn, maxTime) {
       
       if (nextRetryTime >= maxTime) {
         console.log(`Max retry time ${maxTime}ms reached after ${retryCount} attempts, stopping retries`);
-        throw {
-          message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
-          code: 'retry_timeout',
-          lastError: lastError,
-          providerError: lastProviderError,
-          attempts: retryCount
-        };
+        const error = new Error(lastProviderError?.message || `服务请求超时，请稍后再试。`);
+        error.code = 'retry_timeout';
+        error.lastError = lastError;
+        error.providerError = lastProviderError;
+        error.attempts = retryCount;
+        throw error;
       }
       
       console.log(`Waiting ${RETRY_DELAY}ms before next retry...`);
@@ -138,12 +137,14 @@ function handleError(error) {
   if (error.code === 'retry_timeout') {
     // 如果有服务商的原始错误信息，优先使用
     if (error.providerError) {
+      const providerError = error.providerError.error || error.providerError;
       return {
         error: {
-          message: translateErrorMessage(error.providerError.message) || "服务请求超时，请稍后再试",
-          type: error.providerError.type || "provider_error",
-          code: error.providerError.code || 503,
-          provider_details: error.providerError
+          message: translateErrorMessage(providerError.message) || "服务请求超时，请稍后再试",
+          type: providerError.type || "provider_error",
+          code: providerError.code || 503,
+          provider_details: error.providerError,
+          attempts: error.attempts
         }
       };
     }
@@ -153,7 +154,8 @@ function handleError(error) {
         message: "服务请求超时，请稍后再试",
         type: "retry_timeout_error",
         code: 503,
-        details: error.message
+        details: error.message,
+        attempts: error.attempts
       }
     };
   }
