@@ -6,8 +6,8 @@ const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); // 最�
 const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '5000'); // 重试间隔时间控制
 const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 流式超时控制
 
- // 添加重试函数
- async function retryRequest(requestFn, maxTime) {
+// 添加重试函数
+async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
   let lastError = null;
   let lastProviderError = null;  // 添加这个变量来保存服务商错误
@@ -21,10 +21,9 @@ const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 流�
       // 保存服务商的错误信息
       lastProviderError = error.response?.data?.error || error.response?.data;
       
-      console.log(`Request failed at ${new Date().toISOString()}:`, {
-        axiosError: error.message,
-        httpStatus: error.response?.status,
-        providerError: lastProviderError,
+      console.log(`Request failed at ${new Date().toISOString()}, error:`, {
+        message: error.message,
+        providerError: lastProviderError
       });
       
       if (Date.now() - startTime + RETRY_DELAY < maxTime) {
@@ -32,7 +31,7 @@ const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 流�
       } else {
         console.log(`Max retry time ${maxTime}ms reached, stopping retries`);
         throw {
-          message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功。服务商返回：${lastProviderError?.message || '未知错误'}`,
+          message: `服务请求超时，请稍后再试。`,
           code: 'retry_timeout',
           lastError: error,
           providerError: lastProviderError  // 确保传递服务商错误
@@ -42,7 +41,7 @@ const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 流�
   }
   
   throw {
-    message: `请求重试超时（${maxTime}毫秒），多次尝试后仍未成功。服务商返回：${lastProviderError?.message || '未知错误'}`,
+    message: `服务请求超时，请稍后再试。`,
     code: 'retry_timeout',
     lastError: lastError,
     providerError: lastProviderError  // 确保传递服务商错误
@@ -125,12 +124,27 @@ function handleError(error) {
 
   // 添加重试超时错误处理
   if (error.code === 'retry_timeout') {
+    // 如果有服务商的原始错误信息，优先使用
+    if (error.providerError?.message) {
+      return {
+        error: {
+          message: error.providerError.message,
+          type: error.providerError.type || "provider_error",
+          code: error.providerError.code || 503,
+          retry_context: {
+            max_retry_time: MAX_RETRY_TIME,
+            message: error.message
+          }
+        }
+      };
+    }
+    
     return {
       error: {
-        message: error.message, // 这里已经包含了服务商错误信息
-        type: error.providerError?.type || "retry_timeout_error",
-        code: error.providerError?.code || 503,
-        provider_error: error.providerError?.message // 保留原始服务商错误
+        message: "服务请求超时，请稍后再试。",
+        type: "retry_timeout_error",
+        code: 503,
+        details: error.message
       }
     };
   }
@@ -146,12 +160,12 @@ function handleError(error) {
     };
   }
 
-  // 服务商返回的错误
+  // 服务商返回的错误 - 合并两处重复的错误处理逻辑
   if (error.response?.data) {
     const providerError = error.response.data.error || error.response.data;
     return {
       error: {
-        message: providerError.message || "服务调用失败",
+        message: translateErrorMessage(providerError.message) || "服务调用失败",
         type: providerError.type || "api_error",
         code: providerError.code || error.response.status,
         param: providerError.param,
@@ -193,6 +207,30 @@ function handleError(error) {
   };
 }
 
+// 添加错误消息翻译函数
+function translateErrorMessage(message) {
+  const errorMessages = {
+    'Invalid authentication credentials': '无效的认证凭据',
+    'Rate limit exceeded': '请求频率超限',
+    'The model is overloaded': '模型负载过高，请稍后重试',
+    'The server had an error processing your request': '服务器处理请求时发生错误',
+    'Bad gateway': '网关错误',
+    'Gateway timeout': '网关超时',
+    'Service unavailable': '服务不可用',
+    'Request timeout': '请求超时',
+    'Too many requests': '请求次数过多',
+    'Internal server error': '服务器内部错误',
+    'Content violation detected': '检测到违规内容',
+    'Invalid request': '无效的请求',
+    'Not found': '资源未找到',
+    'Unauthorized': '未授权访问',
+    'Forbidden': '禁止访问',
+    'Max retry time exceeded': '请求超过最大重试时间',
+    'Stream response timeout': '流式响应超时',
+  };
+
+  return errorMessages[message] || message;
+}
 
 // 发送到第二个运营商的请求处理
 async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
