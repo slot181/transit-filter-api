@@ -30,7 +30,6 @@ const ErrorCodes = {
 // 添加重试函数
 async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
-  let lastError = null;
   let lastProviderError = null;
   let retryCount = 0;
   
@@ -39,7 +38,6 @@ async function retryRequest(requestFn, maxTime) {
       const response = await requestFn();
       return response;
     } catch (error) {
-      lastError = error;
       // 更详细地解析和保存服务商错误
       if (error.response?.data) {
         // 如果错误信息在 error 字段中
