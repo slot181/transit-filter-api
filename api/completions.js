@@ -187,11 +187,21 @@ function handleError(error) {
     statusText: error.response?.statusText
   });
 
+  // 如果有服务提供商的原始错误响应，优先使用它
+  if (error.response?.data?.error) {
+    return {
+      error: {
+        message: error.response.data.error.message,
+        type: error.response.data.error.type || ErrorTypes.SERVICE,
+        code: error.response.status || 500
+      }
+    };
+  }
+
   // 提取原始错误信息
-  let errorMessage = error.response?.data?.error?.message  // OpenAI 风格的错误
-    || error.response?.data?.message                       // 一般 REST API 错误
-    || error.message                                       // 原生 Error 对象的消息
-    || "服务器内部错误";                                   // 默认错误信息
+  let errorMessage = error.response?.data?.message  // 一般 REST API 错误
+    || error.message                               // 原生 Error 对象的消息
+    || "服务器内部错误";                           // 默认错误信息
 
   // 对于重试超时的特殊处理
   if (error.isRetryTimeout) {
@@ -203,12 +213,12 @@ function handleError(error) {
     errorMessage = "流式响应超时，请稍后再试";
   }
 
-  // 返回简化的错误响应
+  // 返回格式化的错误响应
   return {
     error: {
       message: errorMessage,
-      type: ErrorTypes.SERVICE,          // 使用通用的服务错误类型
-      code: error.response?.status || 500 // 使用 HTTP 状态码或默认 500
+      type: error.response?.data?.error?.type || ErrorTypes.SERVICE,
+      code: error.response?.status || 500
     }
   };
 }
