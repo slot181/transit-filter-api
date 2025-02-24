@@ -215,6 +215,20 @@ function handleError(error) {
 
 // 发送到第二个运营商的请求处理
 async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
+  // 检查o3模型的temperature限制
+  if (req.body.model && req.body.model.toLowerCase().includes('o3')) {
+    const temperature = req.body.temperature || 0.7;
+    if (temperature !== 0) {
+      throw {
+        error: {
+          message: "o3模型的temperature值必须为0",
+          type: ErrorTypes.INVALID_REQUEST,
+          code: 400
+        }
+      };
+    }
+  }
+
   const secondProviderRequest = {
     model: req.body.model,
     messages: req.body.messages,
