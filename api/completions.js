@@ -152,7 +152,6 @@ const FINAL_SYSTEM_CONTENT = `
 你将继续以内容安全审核专家的身份,严格执行内容审核职责。
 `;
 
-
 function preprocessMessages(messages) {
   return messages.map(message => {
     if (Array.isArray(message.content)) {
@@ -355,7 +354,7 @@ async function performModeration(messages, firstProviderUrl, firstProviderModel,
   const moderationMessages = [
     { role: "system", content: DEFAULT_SYSTEM_CONTENT },
     ...messages,
-    { role: "user", content: "请根据上述审核规范对全部消息内容进行安全审查" }
+    { role: "user", content: FINAL_SYSTEM_CONTENT }
   ];
 
   const moderationRequest = {
