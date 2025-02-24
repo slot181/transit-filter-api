@@ -32,6 +32,7 @@ async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
   let retryCount = 0;
   let lastError = null;
+  let lastErrorResponse = null;
   
   const tryRequest = async () => {
     try {
@@ -40,11 +41,25 @@ async function retryRequest(requestFn, maxTime) {
       retryCount++;
       lastError = error;
       
+      // 保存最后一个错误的完整响应
+      if (error.response?.data) {
+        lastErrorResponse = error.response.data;
+      } else if (error.message) {
+        // 如果没有response.data，构造一个OpenAI格式的错误响应
+        lastErrorResponse = {
+          error: {
+            message: error.message,
+            type: error.type || ErrorTypes.SERVICE,
+            code: error.code || ErrorCodes.INTERNAL_ERROR
+          }
+        };
+      }
+      
       // 记录错误信息
       console.log(`Request failed (attempt ${retryCount}) at ${new Date().toISOString()}:`, {
         error: {
           message: error.message,
-          response: error.response?.data,
+          response: lastErrorResponse,
           status: error.response?.status
         }
       });
@@ -53,9 +68,11 @@ async function retryRequest(requestFn, maxTime) {
       const nonRetryableStatuses = [400, 401, 403, 404, 422];
       if (error.response && nonRetryableStatuses.includes(error.response.status)) {
         console.log(`Non-retryable status code ${error.response.status}, stopping retries`);
+        error.lastErrorResponse = lastErrorResponse;
         throw error;
       }
       
+      error.lastErrorResponse = lastErrorResponse;
       throw error;
     }
   };
@@ -182,10 +199,15 @@ function handleError(error) {
   // 记录详细的错误信息用于调试
   console.error('Error details:', {
     message: error.message,
-    response: error.response?.data,
+    response: error.lastErrorResponse || error.response?.data,
     status: error.response?.status,
     statusText: error.response?.statusText
   });
+
+  // 如果有保存的最后一个错误响应，直接返回它
+  if (error.lastErrorResponse) {
+    return error.lastErrorResponse;
+  }
 
   // 提取原始错误信息
   let errorMessage = error.response?.data?.error?.message  // OpenAI 风格的错误
@@ -203,12 +225,12 @@ function handleError(error) {
     errorMessage = "流式响应超时，请稍后再试";
   }
 
-  // 返回简化的错误响应
+  // 返回OpenAI格式的错误响应
   return {
     error: {
       message: errorMessage,
-      type: ErrorTypes.SERVICE,          // 使用通用的服务错误类型
-      code: error.response?.status || 500 // 使用 HTTP 状态码或默认 500
+      type: error.type || ErrorTypes.SERVICE,          // 使用错误类型或默认服务错误类型
+      code: error.code || error.response?.status || 500 // 使用错误码、HTTP状态码或默认500
     }
   };
 }
