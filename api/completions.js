@@ -219,11 +219,16 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
   if (req.body.model && req.body.model.toLowerCase().includes('o3')) {
     const temperature = req.body.temperature || 0.7;
     if (temperature !== 0) {
-      const error = {
-        error: {
-          message: "o3模型的temperature值必须为0",
-          type: ErrorTypes.INVALID_REQUEST,
-          code: "invalid_temperature"
+      // 创建一个错误对象
+      const error = new Error("o3模型的temperature值必须为0");
+      error.response = {
+        status: 400,
+        data: {
+          error: {
+            message: "o3模型的temperature值必须为0",
+            type: ErrorTypes.INVALID_REQUEST,
+            code: "invalid_temperature"
+          }
         }
       };
       // 设置特殊标记，表明这是不需要重试的错误
