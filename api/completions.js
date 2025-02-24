@@ -38,29 +38,40 @@ async function retryRequest(requestFn, maxTime) {
       const response = await requestFn();
       return response;
     } catch (error) {
-      // 更详细地解析和保存服务商错误
-      if (error.response?.data) {
-        // 如果错误信息在 error 字段中
-        if (error.response.data.error) {
-          lastProviderError = error.response.data.error;
-        }
-        // 如果错误信息直接在 data 中
-        else {
-          lastProviderError = {
-            message: error.response.data.message,
-            type: error.response.data.type,
-            code: error.response.data.code
-          };
-        }
-      } else if (error.providerError) {
-        lastProviderError = error.providerError;
-      }
+      // 保存完整的错误信息
+      lastProviderError = {
+        message: error.providerError?.message || error.response?.data?.error?.message || error.response?.data?.message || error.message,
+        type: error.providerError?.type || error.response?.data?.error?.type || error.response?.data?.type || ErrorTypes.SERVICE,
+        code: error.providerError?.code || error.response?.data?.error?.code || error.response?.data?.code || ErrorCodes.INTERNAL_ERROR,
+        isSecondProvider: error.isSecondProvider || false,
+        status: error.response?.status,
+        statusText: error.response?.statusText
+      };
       
       retryCount++;
-      console.log(`Request failed (attempt ${retryCount}) at ${new Date().toISOString()}, error:`, {
-        message: error.message,
-        providerError: lastProviderError
+      console.log(`Request failed (attempt ${retryCount}) at ${new Date().toISOString()}:`, {
+        attempt: retryCount,
+        elapsedTime: Date.now() - startTime,
+        error: {
+          message: error.message,
+          providerError: lastProviderError,
+          isSecondProvider: error.isSecondProvider,
+          status: error.response?.status
+        }
       });
+      
+      // 某些错误不需要重试
+      if (error.response?.status === 401 || // 认证错误
+          error.response?.status === 403 || // 权限错误
+          error.response?.status === 400 || // 请求参数错误
+          lastProviderError.code === ErrorCodes.CONTENT_VIOLATION) { // 内容违规
+        console.log('Non-retryable error detected, stopping retries');
+        throw {
+          ...error,
+          providerError: lastProviderError,
+          isNonRetryableError: true
+        };
+      }
       
       throw error;
     }
@@ -70,6 +81,11 @@ async function retryRequest(requestFn, maxTime) {
     try {
       return await tryRequest();
     } catch (error) {
+      // 如果是不可重试的错误，直接抛出
+      if (error.isNonRetryableError) {
+        throw error;
+      }
+      
       const elapsedTime = Date.now() - startTime;
       const nextRetryTime = elapsedTime + RETRY_DELAY;
       
@@ -77,13 +93,14 @@ async function retryRequest(requestFn, maxTime) {
         const retryType = nextRetryTime >= maxTime ? 'time limit' : 'count limit';
         const retryValue = nextRetryTime >= maxTime ? maxTime + 'ms' : MAX_RETRY_COUNT;
         console.log(`[${requestFn.name || 'Unknown'}] Max retry ${retryType} (${retryValue}) reached, stopping retries`);
-        // 优先使用原始错误的类型和错误码
+        
         throw {
           message: lastProviderError?.message || `服务请求超时，请稍后再试。`,
           type: lastProviderError?.type || ErrorTypes.SERVICE,
           code: lastProviderError?.code || ErrorCodes.RETRY_TIMEOUT,
           providerError: lastProviderError,
-          isRetryTimeout: true  // 添加明确的标识
+          isRetryTimeout: true,
+          isSecondProvider: error.isSecondProvider || false
         };
       }
       
@@ -189,17 +206,25 @@ function preprocessMessages(messages) {
 
 // 处理错误并返回格式化后的错误信息
 function handleError(error) {
-  console.error('Error:', error.message, error.providerError);
+  // 记录详细的错误信息
+  console.error('Error:', {
+    message: error.message,
+    providerError: error.providerError,
+    isSecondProvider: error.isSecondProvider,
+    isStreamError: error.isStreamError,
+    status: error.response?.status,
+    statusText: error.response?.statusText
+  });
 
   // 获取错误消息的辅助函数
   const getErrorMessage = (error) => {
-    // 直接从错误对象获取消息
-    if (error.message) {
-      return error.message;
-    }
-    // 从 providerError 获取消息
+    // 优先使用 providerError 中的消息
     if (error.providerError?.message) {
       return error.providerError.message;
+    }
+    // 从错误对象获取消息
+    if (error.message) {
+      return error.message;
     }
     // 从 response.data 获取消息
     if (error.response?.data?.error?.message) {
@@ -211,69 +236,79 @@ function handleError(error) {
     return "服务器内部错误，请稍后重试";
   };
 
-  // 重试超时错误 - 增强错误识别逻辑
-  if (error.code === ErrorCodes.RETRY_TIMEOUT ||
-      error.isRetryTimeout ||
-      error.providerError?.code === ErrorCodes.RETRY_TIMEOUT) {
-    return {
-      error: {
-        message: translateErrorMessage(getErrorMessage(error)),
+  // 获取错误类型和代码
+  const getErrorTypeAndCode = (error) => {
+    // 重试超时错误
+    if (error.code === ErrorCodes.RETRY_TIMEOUT ||
+        error.isRetryTimeout ||
+        error.providerError?.code === ErrorCodes.RETRY_TIMEOUT) {
+      return {
         type: ErrorTypes.SERVICE,
         code: ErrorCodes.RETRY_TIMEOUT
-      }
-    };
-  }
+      };
+    }
 
-  // 流式响应超时
-  if (error.message?.includes('Stream response timeout')) {
-    return {
-      error: {
-        message: "流式响应超时",
+    // 流式响应超时
+    if (error.isStreamError || error.message?.includes('Stream response timeout')) {
+      return {
         type: ErrorTypes.SERVICE,
         code: ErrorCodes.STREAM_TIMEOUT
-      }
-    };
-  }
+      };
+    }
 
-  // 认证错误
-  if (error.code === 'invalid_auth_key') {
-    return {
-      error: {
-        message: "无效的认证密钥",
+    // 认证错误
+    if (error.response?.status === 401 ||
+        error.code === 'invalid_auth_key' ||
+        error.providerError?.code === 'invalid_auth_key') {
+      return {
         type: ErrorTypes.AUTHENTICATION,
         code: ErrorCodes.INVALID_AUTH_KEY
-      }
-    };
-  }
+      };
+    }
 
-  // 内容违规
-  if (error.code === 'content_violation') {
-    return {
-      error: {
-        message: "内容违规",
+    // 内容违规
+    if (error.code === 'content_violation' ||
+        error.providerError?.code === 'content_violation') {
+      return {
         type: ErrorTypes.INVALID_REQUEST,
         code: ErrorCodes.CONTENT_VIOLATION
-      }
-    };
-  }
+      };
+    }
 
-  // 网络错误
-  if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED') {
-    return {
-      error: {
-        message: "服务暂时不可用，请稍后重试",
+    // 网络错误
+    if (error.code === 'ECONNREFUSED' ||
+        error.code === 'ECONNABORTED' ||
+        error.response?.status === 503) {
+      return {
         type: ErrorTypes.SERVICE,
         code: ErrorCodes.SERVICE_UNAVAILABLE
-      }
-    };
-  }
+      };
+    }
 
-  // 处理其他所有错误
-  return {
-    error: {
-      message: translateErrorMessage(getErrorMessage(error)),
+    // 使用 providerError 中的类型和代码
+    if (error.providerError?.type && error.providerError?.code) {
+      return {
+        type: error.providerError.type,
+        code: error.providerError.code
+      };
+    }
+
+    // 默认错误类型和代码
+    return {
       type: ErrorTypes.SERVICE,
       code: ErrorCodes.INTERNAL_ERROR
+    };
+  };
+
+  const { type, code } = getErrorTypeAndCode(error);
+  const message = translateErrorMessage(getErrorMessage(error));
+
+  return {
+    error: {
+      message,
+      type,
+      code,
+      isSecondProvider: error.isSecondProvider || false
     }
   };
 }
@@ -306,48 +341,64 @@ function translateErrorMessage(message) {
 
 // 发送到第二个运营商的请求处理
 async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
-  const secondProviderRequest = {
-    model: req.body.model,
-    messages: req.body.messages,
-    stream: req.body.stream || false,
-    temperature: req.body.temperature,
-    max_tokens: req.body.max_tokens || 4096
-  };
+  try {
+    const secondProviderRequest = {
+      model: req.body.model,
+      messages: req.body.messages,
+      stream: req.body.stream || false,
+      temperature: req.body.temperature,
+      max_tokens: req.body.max_tokens || 4096
+    };
 
-  if (req.body.response_format) {
-    secondProviderRequest.response_format = req.body.response_format;
-  }
+    if (req.body.response_format) {
+      secondProviderRequest.response_format = req.body.response_format;
+    }
 
-  if (req.body.tools) {
-    secondProviderRequest.tools = req.body.tools;
-  }
+    if (req.body.tools) {
+      secondProviderRequest.tools = req.body.tools;
+    }
 
-  console.log('Second provider request:', {
-    ...secondProviderRequest,
-    messages: secondProviderRequest.messages.map(msg => ({
-      ...msg,
-      content: Array.isArray(msg.content)
-        ? msg.content.map(item => item.type === 'text' ? item.text : '[图片]').join('\n')
-        : msg.content
-    }))
-  });
+    console.log('Second provider request:', {
+      ...secondProviderRequest,
+      messages: secondProviderRequest.messages.map(msg => ({
+        ...msg,
+        content: Array.isArray(msg.content)
+          ? msg.content.map(item => item.type === 'text' ? item.text : '[图片]').join('\n')
+          : msg.content
+      }))
+    });
 
-  if (req.body.stream) {
-    return await axios.post(
+    const response = await axios.post(
       secondProviderUrl + '/v1/chat/completions',
       secondProviderRequest,
       {
         ...secondProviderConfig,
-        responseType: 'stream'
+        responseType: req.body.stream ? 'stream' : 'json'
       }
     );
-  }
 
-  return await axios.post(
-    secondProviderUrl + '/v1/chat/completions',
-    secondProviderRequest,
-    secondProviderConfig
-  );
+    return response;
+  } catch (error) {
+    // 确保错误对象包含完整的错误信息
+    const enhancedError = {
+      ...error,
+      isSecondProvider: true, // 标记这是来自第二个服务商的错误
+      providerError: {
+        message: error.response?.data?.error?.message || error.response?.data?.message || error.message,
+        type: error.response?.data?.error?.type || error.response?.data?.type || ErrorTypes.SERVICE,
+        code: error.response?.data?.error?.code || error.response?.data?.code || ErrorCodes.INTERNAL_ERROR
+      }
+    };
+
+    console.error('Second provider error:', {
+      message: enhancedError.message,
+      providerError: enhancedError.providerError,
+      status: error.response?.status,
+      statusText: error.response?.statusText
+    });
+
+    throw enhancedError;
+  }
 }
 
 async function performModeration(messages, firstProviderUrl, firstProviderModel, firstProviderConfig) {
@@ -469,10 +520,34 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
       stream.on('error', (error) => {
         clearInterval(checkInterval);
-        console.error('Stream error:', error);
-        const errorResponse = handleError(error);
-        res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
-        res.write('data: [DONE]\n\n');
+        // 记录详细的流式错误信息
+        console.error('Stream error:', {
+          message: error.message,
+          providerError: error.providerError,
+          isSecondProvider: error.isSecondProvider,
+          status: error.response?.status,
+          statusText: error.response?.statusText
+        });
+
+        // 处理流式错误响应
+        const errorResponse = handleError({
+          ...error,
+          isStreamError: true,
+          isSecondProvider: true,
+          providerError: error.providerError || {
+            message: error.message,
+            type: ErrorTypes.SERVICE,
+            code: ErrorCodes.STREAM_TIMEOUT
+          }
+        });
+
+        // 发送错误响应给客户端
+        try {
+          res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+          res.write('data: [DONE]\n\n');
+        } catch (writeError) {
+          console.error('Error writing stream error response:', writeError);
+        }
         res.end();
       });
     }
