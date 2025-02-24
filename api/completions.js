@@ -24,7 +24,8 @@ const ErrorCodes = {
   RETRY_TIMEOUT: 'retry_timeout',               // 重试超时
   STREAM_TIMEOUT: 'stream_timeout',             // 流式响应超时
   SERVICE_UNAVAILABLE: 'service_unavailable',    // 服务不可用
-  INTERNAL_ERROR: 'internal_error'              // 内部错误
+  INTERNAL_ERROR: 'internal_error',              // 内部错误
+  INVALID_TEMPERATURE: 'invalid_temperature'   // 无效的temperature参数
 };
 
 // 添加重试函数
@@ -237,7 +238,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
           error: {
             message: "o3模型的temperature值必须为0",
             type: ErrorTypes.INVALID_REQUEST,
-            code: "invalid_temperature"
+            code: ErrorCodes.INVALID_TEMPERATURE
           }
         }
       };
