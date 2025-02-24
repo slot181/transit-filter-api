@@ -227,7 +227,7 @@ function handleError(error) {
 async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
   // 检查o3模型的temperature限制
   if (req.body.model && req.body.model.toLowerCase().includes('o3')) {
-    const temperature = req.body.temperature || 0.7;
+    const temperature = req.body.temperature ?? 0; // 使用空值合并运算符，如果temperature为undefined或null则使用0
     if (temperature !== 0) {
       // 创建一个错误对象
       const error = new Error("o3模型的temperature值必须为0");
@@ -251,7 +251,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
     model: req.body.model,
     messages: req.body.messages,
     stream: req.body.stream || false,
-    temperature: req.body.temperature || 0.7,
+    temperature: req.body.temperature,
     max_tokens: req.body.max_tokens || 4096
   };
 
