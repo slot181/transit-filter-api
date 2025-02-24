@@ -49,10 +49,10 @@ async function retryRequest(requestFn, maxTime) {
         }
       });
       
-      // 不需要重试的错误状态码
+      // 检查是否是标记为不需要重试的错误或状态码表明不需要重试
       const nonRetryableStatuses = [400, 401, 403, 404, 422];
-      if (error.response && nonRetryableStatuses.includes(error.response.status)) {
-        console.log(`Non-retryable status code ${error.response.status}, stopping retries`);
+      if (error.nonRetryable || (error.response && nonRetryableStatuses.includes(error.response.status))) {
+        console.log('Non-retryable error detected, stopping retries');
         throw error;
       }
       
@@ -219,13 +219,16 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
   if (req.body.model && req.body.model.toLowerCase().includes('o3')) {
     const temperature = req.body.temperature || 0.7;
     if (temperature !== 0) {
-      throw {
+      const error = {
         error: {
           message: "o3模型的temperature值必须为0",
           type: ErrorTypes.INVALID_REQUEST,
-          code: 400
+          code: "invalid_temperature"
         }
       };
+      // 设置特殊标记，表明这是不需要重试的错误
+      error.nonRetryable = true;
+      throw error;
     }
   }
 
