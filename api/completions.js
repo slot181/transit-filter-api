@@ -393,8 +393,16 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
       };
     });
     
+    // 应用随机截取策略处理超长文本
+    const extractResult = extractRandomSegments(clientMessagesContent);
+    
+    // 如果进行了截取，记录相关信息
+    if (extractResult.isExtracted) {
+      console.log(`内容审核: 原始长度 ${extractResult.originalLength} 字符，截取后 ${extractResult.extractedLength} 字符`);
+    }
+    
     // 构建一个包含所有内容的单一消息，确保所有内容都被审核
-    const allMessagesText = clientMessagesContent.map(msg => 
+    const allMessagesText = extractResult.messages.map(msg => 
       `[${msg.role.toUpperCase()}]: ${msg.content}`
     ).join('\n\n');
     
@@ -403,7 +411,7 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
       { 
         role: "user", 
-        content: `以下是需要审核的完整对话内容，请仔细审核每一部分：\n\n${allMessagesText}` 
+        content: `以下是需要审核的${extractResult.isExtracted ? '部分截取的' : '完整'}对话内容，请仔细审核每一部分：\n\n${allMessagesText}` 
       },
       { role: "user", content: FINAL_SYSTEM_CONTENT }
     ];
@@ -436,7 +444,13 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
         contentPreview: typeof msg.content === 'string' && msg.content.length > 50
           ? msg.content.substring(0, 50) + '...'
           : (typeof msg.content === 'string' ? msg.content : 'non-string content')
-      }))
+      })),
+      // 添加截取信息
+      extractionInfo: extractResult.isExtracted ? {
+        originalLength: extractResult.originalLength,
+        extractedLength: extractResult.extractedLength,
+        reductionPercent: Math.round((1 - extractResult.extractedLength / extractResult.originalLength) * 100)
+      } : null
     });
 
     try {
@@ -467,7 +481,8 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
             code: ErrorCodes.CONTENT_VIOLATION,
             details: {
               riskLevel: moderationResult.riskLevel,
-              logId: logId
+              logId: logId,
+              isPartialCheck: extractResult.isExtracted
             }
           }
         };
@@ -477,7 +492,8 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
       return {
         passed: true,
         logId: logId,
-        riskLevel: moderationResult.riskLevel
+        riskLevel: moderationResult.riskLevel,
+        isPartialCheck: extractResult.isExtracted
       };
     } catch (error) {
       // 如果错误已经是我们格式化过的违规错误，直接抛出
@@ -556,6 +572,10 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       // 可以在响应头中添加审核ID，方便追踪
       res.setHeader('X-Moderation-ID', moderationResult.logId);
       res.setHeader('X-Risk-Level', moderationResult.riskLevel);
+      // 如果审核结果包含部分审核标记，添加到响应头
+      if (moderationResult.isPartialCheck) {
+        res.setHeader('X-Moderation-Partial', 'true');
+      }
     } catch (moderationError) {
       if (moderationError.error?.code === "content_violation") {
         res.write(`data: ${JSON.stringify(moderationError)}\n\n`);
@@ -621,6 +641,153 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
   }
 }
 
+// 计算消息总长度的函数
+function calculateTotalLength(messages) {
+  return messages.reduce((total, msg) => {
+    const content = typeof msg.content === 'string' 
+      ? msg.content 
+      : JSON.stringify(msg.content);
+    return total + content.length;
+  }, 0);
+}
+
+// 随机截取文本的函数
+function extractRandomSegments(messages, maxLength = 30000) {
+  const totalLength = calculateTotalLength(messages);
+  
+  // 如果总长度小于最大长度，直接返回原始消息
+  if (totalLength <= maxLength) {
+    return {
+      messages: messages,
+      isExtracted: false,
+      originalLength: totalLength,
+      extractedLength: totalLength
+    };
+  }
+  
+  console.log(`消息总长度(${totalLength})超过最大限制(${maxLength})，将进行随机截取`);
+  
+  // 创建消息的副本，以便我们可以修改它
+  const extractedMessages = [];
+  let currentLength = 0;
+  
+  // 首先添加所有非用户消息，因为这些通常包含重要的上下文
+  messages.forEach(msg => {
+    if (msg.role !== 'user') {
+      const content = typeof msg.content === 'string' 
+        ? msg.content 
+        : JSON.stringify(msg.content);
+      
+      extractedMessages.push({
+        role: msg.role,
+        content: content
+      });
+      
+      currentLength += content.length;
+    }
+  });
+  
+  // 计算剩余可用长度
+  const remainingLength = maxLength - currentLength;
+  
+  // 收集所有用户消息
+  const userMessages = messages.filter(msg => msg.role === 'user');
+  
+  if (userMessages.length === 0) {
+    return {
+      messages: extractedMessages,
+      isExtracted: true,
+      originalLength: totalLength,
+      extractedLength: currentLength
+    };
+  }
+  
+  // 如果只有一条用户消息，随机截取其内容
+  if (userMessages.length === 1) {
+    const msg = userMessages[0];
+    const content = typeof msg.content === 'string' 
+      ? msg.content 
+      : JSON.stringify(msg.content);
+    
+    if (content.length <= remainingLength) {
+      extractedMessages.push(msg);
+    } else {
+      // 随机截取策略：取开头、中间和结尾的部分
+      const segmentLength = Math.floor(remainingLength / 3);
+      
+      // 取开头部分
+      const startSegment = content.substring(0, segmentLength);
+      
+      // 取中间随机部分
+      const middleStart = Math.floor(Math.random() * (content.length - segmentLength));
+      const middleSegment = content.substring(middleStart, middleStart + segmentLength);
+      
+      // 取结尾部分
+      const endSegment = content.substring(content.length - segmentLength);
+      
+      const extractedContent = `${startSegment}\n...[内容过长，已截取]...\n${middleSegment}\n...[内容过长，已截取]...\n${endSegment}`;
+      
+      extractedMessages.push({
+        role: 'user',
+        content: extractedContent
+      });
+    }
+  } else {
+    // 多条用户消息，随机选择一些消息
+    // 首先计算每条消息的长度
+    const messageLengths = userMessages.map(msg => {
+      const content = typeof msg.content === 'string' 
+        ? msg.content 
+        : JSON.stringify(msg.content);
+      return {
+        message: msg,
+        length: content.length
+      };
+    });
+    
+    // 随机打乱消息顺序
+    messageLengths.sort(() => Math.random() - 0.5);
+    
+    // 按照可用长度添加消息
+    let usedLength = 0;
+    for (const item of messageLengths) {
+      if (usedLength + item.length <= remainingLength) {
+        extractedMessages.push(item.message);
+        usedLength += item.length;
+      } else if (remainingLength - usedLength > 500) {
+        // 如果剩余空间足够大，截取部分内容
+        const content = typeof item.message.content === 'string' 
+          ? item.message.content 
+          : JSON.stringify(item.message.content);
+        
+        const availableLength = remainingLength - usedLength;
+        const extractedContent = content.substring(0, Math.floor(availableLength / 2)) + 
+                               "\n...[内容过长，已截取]...\n" + 
+                               content.substring(content.length - Math.floor(availableLength / 2));
+        
+        extractedMessages.push({
+          role: 'user',
+          content: extractedContent
+        });
+        
+        usedLength += extractedContent.length;
+      }
+      
+      if (usedLength >= remainingLength) break;
+    }
+  }
+  
+  // 计算最终提取的内容长度
+  const extractedLength = calculateTotalLength(extractedMessages);
+  
+  return {
+    messages: extractedMessages,
+    isExtracted: true,
+    originalLength: totalLength,
+    extractedLength: extractedLength
+  };
+}
+
 // 处理非流式响应的函数
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderKey, secondProviderKey) {
   try {
@@ -651,6 +818,10 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       // 可以在响应头中添加审核ID，方便追踪
       res.setHeader('X-Moderation-ID', moderationResult.logId);
       res.setHeader('X-Risk-Level', moderationResult.riskLevel);
+      // 如果审核结果包含部分审核标记，添加到响应头
+      if (moderationResult.isPartialCheck) {
+        res.setHeader('X-Moderation-Partial', 'true');
+      }
     } catch (moderationError) {
       if (moderationError.error?.code === "content_violation") {
         return res.status(403).json(moderationError);
