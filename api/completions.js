@@ -10,8 +10,13 @@ let moderationModelIndex = 0;
 function selectModerationModel(strategy = 'round-robin') {
   const models = config.firstProvider.models;
   
-  // 如果没有配置模型或只有一个模型，直接返回
-  if (models.length <= 1) {
+  // 如果没有配置模型，返回错误
+  if (!models || models.length === 0) {
+    throw new Error("未配置审核模型，请设置 FIRST_PROVIDER_MODELS 环境变量");
+  }
+  
+  // 如果只有一个模型，直接返回
+  if (models.length === 1) {
     return models[0];
   }
   
@@ -274,25 +279,26 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
 }
 
 async function performModeration(messages, firstProviderUrl, firstProviderConfig) {
-  // 选择一个审核模型
-  const selectedModel = selectModerationModel('round-robin');
-  console.log(`Using moderation model: ${selectedModel}`);
-  
-  const moderationMessages = [
-    { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-    ...messages,
-    { role: "user", content: FINAL_SYSTEM_CONTENT }
-  ];
+  try {
+    // 选择一个审核模型
+    const selectedModel = selectModerationModel('round-robin');
+    console.log(`Using moderation model: ${selectedModel}`);
+    
+    const moderationMessages = [
+      { role: "system", content: DEFAULT_SYSTEM_CONTENT },
+      ...messages,
+      { role: "user", content: FINAL_SYSTEM_CONTENT }
+    ];
 
-  const moderationRequest = {
-    messages: moderationMessages,
-    model: selectedModel, // 使用选定的模型
-    temperature: 0,
-    max_tokens: 100,
-    response_format: {
-      type: "json_object"
-    }
-  };
+    const moderationRequest = {
+      messages: moderationMessages,
+      model: selectedModel, // 使用选定的模型
+      temperature: 0,
+      max_tokens: 100,
+      response_format: {
+        type: "json_object"
+      }
+    };
 
   console.log('Moderation Request:', {
     model: moderationRequest.model,
@@ -308,30 +314,44 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
     }))
   });
 
-  try {
-    const checkResponse = await axios.post(
-      firstProviderUrl + '/v1/chat/completions',
-      moderationRequest,
-      firstProviderConfig
-    );
+    try {
+      const checkResponse = await axios.post(
+        firstProviderUrl + '/v1/chat/completions',
+        moderationRequest,
+        firstProviderConfig
+      );
 
-    const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
-    if (moderationResult.isViolation === true) {
+      const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
+      if (moderationResult.isViolation === true) {
+        throw {
+          error: {
+            message: "检测到违规内容，请修改后重试",
+            type: ErrorTypes.INVALID_REQUEST,
+            code: ErrorCodes.CONTENT_VIOLATION
+          }
+        };
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Moderation error with model:', selectedModel, error);
+      // 如果是API错误而不是内容违规，可以考虑重试其他模型
+      if (error.error?.code !== ErrorCodes.CONTENT_VIOLATION) {
+        throw error;
+      }
+      throw error;
+    }
+  } catch (error) {
+    // 如果是模型配置错误，返回更友好的错误信息
+    if (error.message && error.message.includes("未配置审核模型")) {
       throw {
         error: {
-          message: "检测到违规内容，请修改后重试",
-          type: ErrorTypes.INVALID_REQUEST,
-          code: ErrorCodes.CONTENT_VIOLATION
+          message: "服务配置错误：未配置审核模型",
+          type: ErrorTypes.SERVICE,
+          code: ErrorCodes.INTERNAL_ERROR,
+          details: "请管理员设置 FIRST_PROVIDER_MODELS 环境变量"
         }
       };
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Moderation error with model:', selectedModel, error);
-    // 如果是API错误而不是内容违规，可以考虑重试其他模型
-    if (error.error?.code !== ErrorCodes.CONTENT_VIOLATION) {
-      throw error;
     }
     throw error;
   }

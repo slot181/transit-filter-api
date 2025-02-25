@@ -32,7 +32,7 @@ const config = {
     key: process.env.FIRST_PROVIDER_KEY,
     models: process.env.FIRST_PROVIDER_MODELS 
       ? process.env.FIRST_PROVIDER_MODELS.split(',').map(model => model.trim()).filter(Boolean)
-      : (process.env.FIRST_PROVIDER_MODEL ? [process.env.FIRST_PROVIDER_MODEL] : [])
+      : []
   },
   
   // 第二提供商配置（主要服务）
