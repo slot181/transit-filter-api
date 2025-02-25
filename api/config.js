@@ -3,22 +3,22 @@
 // 错误类型常量
 const ErrorTypes = {
   INVALID_REQUEST: 'invalid_request_error',    // 请求参数错误
-  AUTHENTICATION: 'authentication_error',       // 认证错误
+  AUTHENTICATION: 'authentication_error',      // 认证错误
   PERMISSION: 'permission_error',              // 权限错误
-  RATE_LIMIT: 'rate_limit_error',             // 频率限制
-  API: 'api_error',                           // API错误
-  SERVICE: 'service_error'                    // 服务错误
+  RATE_LIMIT: 'rate_limit_error',              // 频率限制
+  API: 'api_error',                            // API错误
+  SERVICE: 'service_error'                     // 服务错误
 };
 
 // 错误码常量
 const ErrorCodes = {
-  INVALID_AUTH_KEY: 'invalid_auth_key',         // 无效的认证密钥
-  CONTENT_VIOLATION: 'content_violation',        // 内容违规
-  RETRY_TIMEOUT: 'retry_timeout',               // 重试超时
-  STREAM_TIMEOUT: 'stream_timeout',             // 流式响应超时
-  SERVICE_UNAVAILABLE: 'service_unavailable',    // 服务不可用
-  INTERNAL_ERROR: 'internal_error',              // 内部错误
-  INVALID_TEMPERATURE: 'invalid_temperature'     // 无效的temperature参数
+  INVALID_AUTH_KEY: 'invalid_auth_key',        // 无效的认证密钥
+  CONTENT_VIOLATION: 'content_violation',      // 内容违规
+  RETRY_TIMEOUT: 'retry_timeout',              // 重试超时
+  STREAM_TIMEOUT: 'stream_timeout',            // 流式响应超时
+  SERVICE_UNAVAILABLE: 'service_unavailable',  // 服务不可用
+  INTERNAL_ERROR: 'internal_error',            // 内部错误
+  INVALID_TEMPERATURE: 'invalid_temperature'   // 无效的temperature参数
 };
 
 // 集中管理的配置

@@ -1,10 +1,15 @@
 {
-  "name": "openai-compatible-api",
+  "name": "content-moderation-api",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "vercel dev",
-    "deploy": "vercel deploy"
+    "deploy": "vercel deploy",
+    "start": "node server.js",
+    "docker:build": "docker build -t content-moderation-api .",
+    "docker:run": "docker run -p 3000:3000 --env-file .env content-moderation-api",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down"
   },
   "dependencies": {
     "axios": "^1.4.0"

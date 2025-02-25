@@ -77,10 +77,10 @@ function logModerationResult(model, request, response, result, isViolation) {
   
   // 使用不同的日志级别区分违规和非违规内容
   if (isViolation) {
-    console.warn(`[MODERATION-VIOLATION][${logId}] 内容违规，风险等级: ${result?.riskLevel || 'unknown'}`);
+    console.warn(`[CONTENT-VIOLATION][${logId}] 内容违规，风险等级: ${result?.riskLevel || 'unknown'}`);
     console.warn(JSON.stringify(logData, null, 2));
   } else {
-    console.log(`[MODERATION-PASS][${logId}] 内容审核通过，风险等级: ${result?.riskLevel || 'unknown'}`);
+    console.log(`[CONTENT-PASS][${logId}] 内容审核通过，风险等级: ${result?.riskLevel || 'unknown'}`);
     console.log(JSON.stringify(logData, null, 2));
   }
   
@@ -476,7 +476,7 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
       if (moderationResult.isViolation === true) {
         const violationError = {
           error: {
-            message: `检测到违规内容，请修改后重试 (ID: ${logId})`,
+            message: `内容审核未通过，请修改后重试 (ID: ${logId})`,
             type: ErrorTypes.INVALID_REQUEST,
             code: ErrorCodes.CONTENT_VIOLATION,
             details: {
@@ -570,11 +570,11 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
       const moderationResult = await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
       moderationPassed = true;
       // 可以在响应头中添加审核ID，方便追踪
-      res.setHeader('X-Moderation-ID', moderationResult.logId);
+      res.setHeader('X-Content-Review-ID', moderationResult.logId);
       res.setHeader('X-Risk-Level', moderationResult.riskLevel);
       // 如果审核结果包含部分审核标记，添加到响应头
       if (moderationResult.isPartialCheck) {
-        res.setHeader('X-Moderation-Partial', 'true');
+        res.setHeader('X-Content-Review-Partial', 'true');
       }
     } catch (moderationError) {
       if (moderationError.error?.code === "content_violation") {
@@ -903,11 +903,11 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       const moderationResult = await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
       moderationPassed = true;
       // 可以在响应头中添加审核ID，方便追踪
-      res.setHeader('X-Moderation-ID', moderationResult.logId);
+      res.setHeader('X-Content-Review-ID', moderationResult.logId);
       res.setHeader('X-Risk-Level', moderationResult.riskLevel);
       // 如果审核结果包含部分审核标记，添加到响应头
       if (moderationResult.isPartialCheck) {
-        res.setHeader('X-Moderation-Partial', 'true');
+        res.setHeader('X-Content-Review-Partial', 'true');
       }
     } catch (moderationError) {
       if (moderationError.error?.code === "content_violation") {
