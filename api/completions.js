@@ -56,7 +56,14 @@ function logModerationResult(model, request, response, result, isViolation) {
       temperature: request.temperature,
       max_tokens: request.max_tokens,
       // 只记录用户消息，避免系统提示过长
-      userMessages: userMessages.length > 500 ? userMessages.substring(0, 500) + '...' : userMessages
+      userMessages: userMessages.length > 500 ? userMessages.substring(0, 500) + '...' : userMessages,
+      // 记录所有原始消息，包括角色信息
+      originalMessages: request.messages.map(msg => ({
+        role: msg.role,
+        content: typeof msg.content === 'string' && msg.content.length > 100 
+          ? msg.content.substring(0, 100) + '...' 
+          : msg.content
+      }))
     },
     response: {
       raw: response ? response.data : null,
@@ -378,9 +385,26 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
     const selectedModel = selectModerationModel('round-robin');
     console.log(`Using moderation model: ${selectedModel}`);
     
+    // 提取客户端的所有消息内容，无论角色是什么
+    const clientMessagesContent = messages.map(msg => {
+      return {
+        role: msg.role,
+        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
+      };
+    });
+    
+    // 构建一个包含所有内容的单一消息，确保所有内容都被审核
+    const allMessagesText = clientMessagesContent.map(msg => 
+      `[${msg.role.toUpperCase()}]: ${msg.content}`
+    ).join('\n\n');
+    
+    // 构造审核消息
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      ...messages,
+      { 
+        role: "user", 
+        content: `以下是需要审核的完整对话内容，请仔细审核每一部分：\n\n${allMessagesText}` 
+      },
       { role: "user", content: FINAL_SYSTEM_CONTENT }
     ];
 
@@ -405,6 +429,13 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
         content: typeof msg.content === 'string' && msg.content.length > 100 
           ? msg.content.substring(0, 100) + '...' 
           : msg.content
+      })),
+      // 添加原始客户端消息的摘要
+      originalClientMessages: messages.map(msg => ({
+        role: msg.role,
+        contentPreview: typeof msg.content === 'string' && msg.content.length > 50
+          ? msg.content.substring(0, 50) + '...'
+          : (typeof msg.content === 'string' ? msg.content : 'non-string content')
       }))
     });
 
