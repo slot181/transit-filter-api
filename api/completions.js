@@ -911,7 +911,10 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       }
     } catch (moderationError) {
       if (moderationError.error?.code === "content_violation") {
-        return res.status(403).json(moderationError);
+        res.statusCode = 403;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(moderationError));
+        return;
       }
       throw moderationError;
     }
@@ -922,23 +925,28 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig), 
         config.timeouts.maxRetryTime
       );
-      res.json(response.data);
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(response.data));
     }
 
   } catch (error) {
     console.error('Normal handler error:', error.message);
     const errorResponse = handleError(error);
     try {
-      res.status(errorResponse.error.code || 500).json(errorResponse);
+      res.statusCode = errorResponse.error.code || 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(errorResponse));
     } catch (writeError) {
       console.error('Error sending error response:', writeError.message);
-      res.status(500).json({
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
         error: {
           message: "服务器内部错误",
           type: ErrorTypes.SERVICE,
           code: ErrorCodes.INTERNAL_ERROR
         }
-      });
+      }));
     }
   }
 }
@@ -949,31 +957,38 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
+    res.statusCode = 200;
+    res.end();
     return;
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({
+    res.statusCode = 405;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
       error: {
         message: "不支持的请求方法",
         type: ErrorTypes.INVALID_REQUEST,
         code: "method_not_allowed"
       }
-    });
+    }));
+    return;
   }
 
   const authKey = req.headers.authorization?.replace('Bearer ', '');
   const validAuthKey = config.authKey;
 
   if (!authKey || authKey !== validAuthKey) {
-    return res.status(401).json({
+    res.statusCode = 401;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
       error: {
         message: "无效的认证密钥",
         type: ErrorTypes.AUTHENTICATION,
         code: ErrorCodes.INVALID_AUTH_KEY
       }
-    });
+    }));
+    return;
   }
 
   const firstProviderUrl = config.firstProvider.url;
@@ -1009,7 +1024,9 @@ module.exports = async (req, res) => {
       res.write('data: [DONE]\n\n');
       res.end();
     } else {
-      res.status(errorResponse.error.code || 500).json(errorResponse);
+      res.statusCode = errorResponse.error.code || 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(errorResponse));
     }
   }
 };

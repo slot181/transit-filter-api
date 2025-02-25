@@ -7,75 +7,94 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
+    res.statusCode = 200;
+    res.end();
     return;
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({
+    res.statusCode = 405;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
       error: {
         message: "不支持的请求方法",
         type: ErrorTypes.INVALID_REQUEST,
         code: "method_not_allowed"
       }
-    });
+    }));
+    return;
   }
 
   const authKey = req.headers.authorization?.replace('Bearer ', '');
   const validAuthKey = config.authKey;
 
   if (!authKey || authKey !== validAuthKey) {
-    return res.status(401).json({
+    res.statusCode = 401;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
       error: {
         message: "无效的认证密钥",
         type: ErrorTypes.AUTHENTICATION,
         code: ErrorCodes.INVALID_AUTH_KEY
       }
-    });
+    }));
+    return;
   }
 
   if (!req.body || typeof req.body !== 'object') {
-    return res.status(400).json({
+    res.statusCode = 400;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
       error: {
         message: "无效的请求体格式",
         type: ErrorTypes.INVALID_REQUEST,
         code: "invalid_body"
       }
-    });
+    }));
+    return;
   }
 
   const { audio, model, language } = req.body;
   if (!audio || typeof audio !== 'string') {
-    return res.status(400).json({
+    res.statusCode = 400;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
       error: {
         message: "音频参数无效",
         type: ErrorTypes.INVALID_REQUEST,
         code: "invalid_audio"
       }
-    });
+    }));
+    return;
   }
 
   if (!model || typeof model !== 'string') {
-    return res.status(400).json({
+    res.statusCode = 400;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
       error: {
         message: "模型参数无效",
         type: ErrorTypes.INVALID_REQUEST,
         code: "invalid_model"
       }
-    });
+    }));
+    return;
   }
 
   const secondProviderUrl = config.secondProvider.url;
   const secondProviderKey = config.secondProvider.key;
 
   if (!secondProviderUrl || !secondProviderKey) {
-    return res.status(500).json({
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
       error: {
         message: "服务配置缺失",
         type: ErrorTypes.SERVICE,
         code: ErrorCodes.INTERNAL_ERROR
       }
-    });
+    }));
+    return;
   }
 
   try {
@@ -90,14 +109,15 @@ module.exports = async (req, res) => {
       }
     );
 
-    res.json(response.data);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(response.data));
   } catch (error) {
     console.error('Audio transcription error:', error);
     const errorResponse = handleError(error);
-    res.status(
-      errorResponse.error.code >= 400 && errorResponse.error.code < 600 
-        ? errorResponse.error.code 
-        : 500
-    ).json(errorResponse);
+    res.statusCode = errorResponse.error.code >= 400 && errorResponse.error.code < 600 
+      ? errorResponse.error.code 
+      : 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(errorResponse));
   }
 };

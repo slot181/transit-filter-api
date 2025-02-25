@@ -7,32 +7,39 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
+    res.statusCode = 200;
+    res.end();
     return;
   }
 
   if (req.method !== 'GET') {
-    return res.status(405).json({
+    res.statusCode = 405;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
       error: {
         message: "Method not allowed",
         type: "invalid_request_error",
         code: 405
       }
-    });
+    }));
+    return;
   }
 
   const secondProviderUrl = config.secondProvider.url;
   const secondProviderKey = config.secondProvider.key;
 
   if (!secondProviderUrl || !secondProviderKey) {
-    return res.status(500).json({
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
       error: {
         message: "Missing required environment variables",
         type: "configuration_error",
         code: "provider_not_configured",
         details: "Missing: SECOND_PROVIDER_URL, SECOND_PROVIDER_KEY"
       }
-    });
+    }));
+    return;
   }
 
   try {
@@ -44,13 +51,14 @@ module.exports = async (req, res) => {
       timeout: 30000
     });
 
-    res.json(response.data);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(response.data));
   } catch (error) {
     const errorResponse = handleError(error);
-    res.status(
-      errorResponse.error.code >= 400 && errorResponse.error.code < 600 
-        ? errorResponse.error.code 
-        : 500
-    ).json(errorResponse);
+    res.statusCode = errorResponse.error.code >= 400 && errorResponse.error.code < 600 
+      ? errorResponse.error.code 
+      : 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(errorResponse));
   }
 };
