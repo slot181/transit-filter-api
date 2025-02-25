@@ -431,13 +431,6 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
       temperature: moderationRequest.temperature,
       max_tokens: moderationRequest.max_tokens,
       response_format: moderationRequest.response_format,
-      // 添加消息内容记录，但排除系统消息以保持日志简洁
-      messages: moderationMessages.filter(msg => msg.role !== 'system').map(msg => ({
-        role: msg.role,
-        content: typeof msg.content === 'string' && msg.content.length > 100 
-          ? msg.content.substring(0, 100) + '...' 
-          : msg.content
-      })),
       // 添加原始客户端消息的摘要
       originalClientMessages: messages.map(msg => ({
         role: msg.role,
