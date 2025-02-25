@@ -51,12 +51,12 @@
 
 1. 构建Docker镜像
    ```bash
-   docker build -t content-moderation-api .
+   docker build -t transit-filter-api .
    ```
 
 2. 运行Docker容器
    ```bash
-   docker run -p 3000:3000 --env-file .env content-moderation-api
+   docker run -p 3000:3000 --env-file .env transit-filter-api
    ```
 
 ## 环境变量说明

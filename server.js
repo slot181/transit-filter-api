@@ -1,9 +1,9 @@
 const http = require('http');
 const url = require('url');
-const completions = require('./app/completions');
-const images = require('./app/images');
-const audio = require('./app/audio');
-const models = require('./app/models');
+const completions = require('./api/completions');
+const images = require('./api/images');
+const audio = require('./api/audio');
+const models = require('./api/models');
 
 // 创建请求处理函数
 async function processRequest(req, res) {

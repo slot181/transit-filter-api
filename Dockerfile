@@ -1,6 +1,6 @@
 FROM node:18-alpine
 
-WORKDIR /app
+WORKDIR /api
 
 # 复制package.json和package-lock.json
 COPY package*.json ./
