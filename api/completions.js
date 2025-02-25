@@ -667,32 +667,52 @@ function extractRandomSegments(messages, maxLength = 30000) {
   
   console.log(`消息总长度(${totalLength})超过最大限制(${maxLength})，将进行随机截取`);
   
+  // 分离用户消息和非用户消息
+  const userMessages = messages.filter(msg => msg.role === 'user');
+  const nonUserMessages = messages.filter(msg => msg.role !== 'user');
+  
+  // 为非用户消息预留最多50%的空间
+  const nonUserMaxLength = Math.floor(maxLength * 0.5);
+  
   // 创建消息的副本，以便我们可以修改它
   const extractedMessages = [];
   let currentLength = 0;
   
-  // 首先添加所有非用户消息，因为这些通常包含重要的上下文
-  messages.forEach(msg => {
-    if (msg.role !== 'user') {
-      const content = typeof msg.content === 'string' 
-        ? msg.content 
-        : JSON.stringify(msg.content);
-      
+  // 首先处理非用户消息（系统消息、助手消息等）
+  for (const msg of nonUserMessages) {
+    const content = typeof msg.content === 'string' 
+      ? msg.content 
+      : JSON.stringify(msg.content);
+    
+    // 如果添加这条消息后仍在限制内，直接添加
+    if (currentLength + content.length <= nonUserMaxLength) {
       extractedMessages.push({
         role: msg.role,
         content: content
       });
-      
       currentLength += content.length;
+    } else {
+      // 如果这条消息太长，截取部分内容
+      const availableLength = nonUserMaxLength - currentLength;
+      if (availableLength > 200) { // 确保至少有足够空间添加有意义的内容
+        const truncatedContent = content.substring(0, Math.floor(availableLength * 0.8)) + 
+                               "\n...[系统内容过长，已截取]...";
+        
+        extractedMessages.push({
+          role: msg.role,
+          content: truncatedContent
+        });
+        currentLength += truncatedContent.length;
+      }
+      // 一旦达到非用户消息的限制，就停止添加
+      break;
     }
-  });
+  }
   
-  // 计算剩余可用长度
+  // 计算剩余可用于用户消息的长度
   const remainingLength = maxLength - currentLength;
   
-  // 收集所有用户消息
-  const userMessages = messages.filter(msg => msg.role === 'user');
-  
+  // 如果没有用户消息，直接返回
   if (userMessages.length === 0) {
     return {
       messages: extractedMessages,
@@ -702,7 +722,7 @@ function extractRandomSegments(messages, maxLength = 30000) {
     };
   }
   
-  // 如果只有一条用户消息，随机截取其内容
+  // 如果只有一条用户消息，处理这种特殊情况
   if (userMessages.length === 1) {
     const msg = userMessages[0];
     const content = typeof msg.content === 'string' 
@@ -710,26 +730,35 @@ function extractRandomSegments(messages, maxLength = 30000) {
       : JSON.stringify(msg.content);
     
     if (content.length <= remainingLength) {
+      // 如果消息长度在限制内，直接添加
       extractedMessages.push(msg);
     } else {
       // 随机截取策略：取开头、中间和结尾的部分
       const segmentLength = Math.floor(remainingLength / 3);
       
+      // 确保段落长度不超过剩余长度的三分之一
+      const safeSegmentLength = Math.min(segmentLength, Math.floor(remainingLength / 3.5));
+      
       // 取开头部分
-      const startSegment = content.substring(0, segmentLength);
+      const startSegment = content.substring(0, safeSegmentLength);
       
       // 取中间随机部分
-      const middleStart = Math.floor(Math.random() * (content.length - segmentLength));
-      const middleSegment = content.substring(middleStart, middleStart + segmentLength);
+      const middleStart = Math.floor(Math.random() * (content.length - safeSegmentLength));
+      const middleSegment = content.substring(middleStart, middleStart + safeSegmentLength);
       
       // 取结尾部分
-      const endSegment = content.substring(content.length - segmentLength);
+      const endSegment = content.substring(content.length - safeSegmentLength);
       
       const extractedContent = `${startSegment}\n...[内容过长，已截取]...\n${middleSegment}\n...[内容过长，已截取]...\n${endSegment}`;
       
+      // 最后检查确保不超过剩余长度
+      const finalContent = extractedContent.length > remainingLength
+        ? extractedContent.substring(0, remainingLength - 30) + "...[已截断]"
+        : extractedContent;
+      
       extractedMessages.push({
         role: 'user',
-        content: extractedContent
+        content: finalContent
       });
     }
   } else {
@@ -745,40 +774,98 @@ function extractRandomSegments(messages, maxLength = 30000) {
       };
     });
     
-    // 随机打乱消息顺序
-    messageLengths.sort(() => Math.random() - 0.5);
+    // 按照消息长度排序（优先选择较短的消息）
+    messageLengths.sort((a, b) => a.length - b.length);
     
     // 按照可用长度添加消息
     let usedLength = 0;
-    for (const item of messageLengths) {
+    
+    // 首先尝试添加完整的短消息
+    for (let i = 0; i < messageLengths.length; i++) {
+      const item = messageLengths[i];
+      
+      // 如果消息可以完整添加
       if (usedLength + item.length <= remainingLength) {
         extractedMessages.push(item.message);
         usedLength += item.length;
-      } else if (remainingLength - usedLength > 500) {
-        // 如果剩余空间足够大，截取部分内容
+        // 标记为已处理
+        messageLengths[i] = null;
+      }
+      
+      // 如果已经达到限制，停止添加
+      if (usedLength >= remainingLength) break;
+    }
+    
+    // 如果还有剩余空间，尝试截取一些较长消息的片段
+    if (usedLength < remainingLength) {
+      // 过滤掉已处理的消息
+      const remainingMessages = messageLengths.filter(item => item !== null);
+      
+      // 随机打乱顺序，以获取更多样的内容
+      remainingMessages.sort(() => Math.random() - 0.5);
+      
+      for (const item of remainingMessages) {
+        const availableLength = remainingLength - usedLength;
+        
+        // 确保有足够空间添加有意义的内容
+        if (availableLength < 200) break;
+        
         const content = typeof item.message.content === 'string' 
           ? item.message.content 
           : JSON.stringify(item.message.content);
         
-        const availableLength = remainingLength - usedLength;
-        const extractedContent = content.substring(0, Math.floor(availableLength / 2)) + 
-                               "\n...[内容过长，已截取]...\n" + 
-                               content.substring(content.length - Math.floor(availableLength / 2));
+        // 计算可以截取的内容长度
+        const truncateLength = Math.min(availableLength - 50, Math.floor(content.length / 2));
         
-        extractedMessages.push({
-          role: 'user',
-          content: extractedContent
-        });
-        
-        usedLength += extractedContent.length;
+        if (truncateLength > 100) {
+          // 截取开头部分
+          const extractedContent = content.substring(0, truncateLength) + 
+                                 "\n...[内容过长，已截取]...";
+          
+          extractedMessages.push({
+            role: 'user',
+            content: extractedContent
+          });
+          
+          usedLength += extractedContent.length;
+          
+          // 如果已经达到限制，停止添加
+          if (usedLength >= remainingLength) break;
+        }
       }
-      
-      if (usedLength >= remainingLength) break;
     }
   }
   
   // 计算最终提取的内容长度
   const extractedLength = calculateTotalLength(extractedMessages);
+  
+  // 最后的安全检查：如果提取的内容仍然超过最大长度，强制截断
+  if (extractedLength > maxLength) {
+    console.warn(`警告：提取后的内容(${extractedLength})仍超过最大长度(${maxLength})，将强制截断`);
+    
+    // 从提取的消息中移除最后一条用户消息
+    for (let i = extractedMessages.length - 1; i >= 0; i--) {
+      if (extractedMessages[i].role === 'user') {
+        extractedMessages.splice(i, 1);
+        break;
+      }
+    }
+    
+    // 重新计算长度
+    const newExtractedLength = calculateTotalLength(extractedMessages);
+    
+    // 如果仍然超过限制，添加一条警告消息
+    if (newExtractedLength > maxLength) {
+      return {
+        messages: [
+          { role: 'system', content: '内容过长，无法处理。请减少输入内容后重试。' }
+        ],
+        isExtracted: true,
+        originalLength: totalLength,
+        extractedLength: 0
+      };
+    }
+  }
   
   return {
     messages: extractedMessages,
