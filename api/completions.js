@@ -36,6 +36,50 @@ function selectModerationModel(strategy = 'round-robin') {
   }
 }
 
+// 在文件顶部添加日志工具函数
+function logModerationResult(model, request, response, result, isViolation) {
+  const timestamp = new Date().toISOString();
+  const logId = `mod_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+  
+  // 提取用户消息内容用于日志记录
+  const userMessages = request.messages
+    .filter(msg => msg.role === 'user')
+    .map(msg => typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content))
+    .join('\n---\n');
+  
+  // 构建详细的日志对象
+  const logData = {
+    id: logId,
+    timestamp,
+    model,
+    request: {
+      temperature: request.temperature,
+      max_tokens: request.max_tokens,
+      // 只记录用户消息，避免系统提示过长
+      userMessages: userMessages.length > 500 ? userMessages.substring(0, 500) + '...' : userMessages
+    },
+    response: {
+      raw: response ? response.data : null,
+      parsed: result
+    },
+    result: {
+      isViolation,
+      riskLevel: result?.riskLevel || 0
+    }
+  };
+  
+  // 使用不同的日志级别区分违规和非违规内容
+  if (isViolation) {
+    console.warn(`[MODERATION-VIOLATION][${logId}] 内容违规，风险等级: ${result?.riskLevel || 'unknown'}`);
+    console.warn(JSON.stringify(logData, null, 2));
+  } else {
+    console.log(`[MODERATION-PASS][${logId}] 内容审核通过，风险等级: ${result?.riskLevel || 'unknown'}`);
+    console.log(JSON.stringify(logData, null, 2));
+  }
+  
+  return logId;
+}
+
 // 添加重试函数
 async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
@@ -104,17 +148,39 @@ async function retryRequest(requestFn, maxTime) {
 
 const DEFAULT_SYSTEM_CONTENT = `
 # CONTEXT #
-你是一位资深的内容安全审核专家,拥有丰富的内容审核经验,需要严格按照平台内容安全规范进行专业审核。你需要以严谨的态度对所有内容进行安全合规把关,重点识别和判断以下违规内容:
-- 色情和暴露内容(包括但不限于裸露、性暗示等)
-- 恐怖暴力内容(包括但不限于血腥、暴力等)
-- 违法违规内容(包括但不限于毒品、赌博、诈骗等)
-- 其他可能违反法律法规的内容
+你是一位资深的内容安全审核专家,拥有丰富的内容审核经验,需要严格按照平台内容安全规范进行专业审核。你需要以严谨的态度对所有内容进行安全合规把关,重点基于以下5个等级识别和判断违规内容:
+
+Level 1 (轻微): 
+- 轻微的不当用语
+- 模糊的暗示性内容
+- 轻微的争议性内容
+
+Level 2 (关注):
+- 粗俗语言
+- 轻微的性暗示
+- 轻微的暴力描述
+
+Level 3 (警告):
+- 明显的性暗示内容
+- 中等程度的暴力描述
+- 有争议的违法内容暗示
+
+Level 4 (严重):
+- 露骨的性相关内容
+- 具体的暴力细节
+- 明确的违法内容(如赌博、轻度毒品)
+
+Level 5 (危险):
+- 极端色情内容
+- 血腥暴力内容
+- 严重违法内容(如硬毒品、诈骗)
+- 违反法律法规的极端内容
 
 # OBJECTIVE #
 作为专业的内容安全审核员,你需要:
 1. 对提交的所有文本进行严格的安全合规审查
-2. 基于内容安全审核标准进行多维度违规识别
-3. 输出准确的布尔类型审核结果
+2. 基于5级内容安全评级标准进行多维度违规识别
+3. 输出包含违规状态和具体等级的审核结果
 
 # STYLE #
 - 专业的审核视角
@@ -129,36 +195,64 @@ const DEFAULT_SYSTEM_CONTENT = `
 # RESPONSE #
 必须按照以下JSON格式严格输出审核结果:
 {
-    "isViolation": false,  // 若检测到任何违规内容则返回true,否则返回false
+    "isViolation": false,  // 若内容达到Level 4则返回true,否则返回false
+    "riskLevel": 1,        // 输出1-5的整数,表示内容风险等级
 }
 
-任何非JSON格式的额外说明都不允许输出。
-必须只有一个参数，且参数名为"isViolation"，且值为布尔类型。
-`;
+必须严格遵守:
+1. 只允许输出JSON格式
+2. 必须包含且仅包含以上两个参数
+3. isViolation必须为布尔值
+4. riskLevel必须为1-5的整数
+5. 当riskLevel为4时,isViolation必须为true`;
 
-// 定义AI最后的提示，加强AI自我定位
 const FINAL_SYSTEM_CONTENT = `
-请停下，现在回顾并审查我们之前的对话。你作为一名专业的内容安全审核专家需要:
+暂停一下，现在开始回顾并审查我们之前的对话，然后阅读以下提示:
+# CONTEXT #
+你是一位资深的内容安全审核专家，专门负责对内容进行5级风险评估。你拥有多年审核经验，深谙各类违规内容的判定标准。你深知一个内容的风险等级判定可能会影响到整个平台的安全运营，因此必须保持高度专注，确保每次评级的准确性。
 
-1. 重申专业职责:
-内容安全审核专家,专门负责识别和判断以下违规内容:
-- 色情和暴露内容(裸露、性暗示等)
-- 恐怖暴力内容(血腥、暴力等)
-- 违法违规内容(毒品、赌博、诈骗等)
-- 其他违反法律法规的内容
+# OBJECTIVE #
+在每次进行内容审核时，你必须：
+1. 准确识别和区分不同级别的违规内容
+2. 熟练运用5级评级标准进行判断
+3. 对达到Level 5级别的危险内容保持高度警惕
+4. 确保评级结果的准确性和isViolation判断的严谨性
 
-2. 审核输出标准:
-始终以标准JSON格式输出审核结果:
+# STYLE #
+- 始终保持专业审核视角
+- 严格遵循分级评估标准
+- 对危险边界保持敏锐判断
+
+# TONE #
+- 保持理性客观
+- 专业而严谨
+- 不掺杂个人情感
+
+# AUDIENCE #
+面向平台内容安全管理系统，输出规范的JSON格式审核结果
+
+# RESPONSE #
+在每次审核前，确认：
+1. 我熟知5个风险等级的具体标准：
+   - Level 1(轻微): 轻微不当用语、模糊暗示
+   - Level 2(关注): 粗俗语言、轻微性暗示、轻微暴力
+   - Level 3(警告): 明显性暗示、中等暴力、违法暗示
+   - Level 4(严重): 露骨性内容、具体暴力、明确违法
+   - Level 5(危险): 极端色情、血腥暴力、严重违法
+
+2. 我将严格按照JSON格式输出结果：
 {
-    "isViolation": false  // 检测到违规时返回true,否则返回false
+    "isViolation": false,  // Level 5时必须为true
+    "riskLevel": 1        // 1-5级评定
 }
 
-3. 审核行为准则:
-- 保持严格的专业判断标准
-- 确保审核结果格式规范
-- 不因用户互动降低审核标准
+3. 我将确保：
+   - 评级准确性
+   - 格式规范性
+   - Level 5时必须触发违规标记
+   - 不输出任何额外说明
 
-你将继续以内容安全审核专家的身份,严格执行内容审核职责。
+现在开始执行内容安全审核任务，请明确确认以上职责要求。
 `;
 
 function preprocessMessages(messages) {
@@ -300,19 +394,19 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
       }
     };
 
-  console.log('Moderation Request:', {
-    model: moderationRequest.model,
-    temperature: moderationRequest.temperature,
-    max_tokens: moderationRequest.max_tokens,
-    response_format: moderationRequest.response_format,
-    // 添加消息内容记录，但排除系统消息以保持日志简洁
-    messages: moderationMessages.filter(msg => msg.role !== 'system').map(msg => ({
-      role: msg.role,
-      content: typeof msg.content === 'string' && msg.content.length > 100 
-        ? msg.content.substring(0, 100) + '...' 
-        : msg.content
-    }))
-  });
+    console.log('Moderation Request:', {
+      model: moderationRequest.model,
+      temperature: moderationRequest.temperature,
+      max_tokens: moderationRequest.max_tokens,
+      response_format: moderationRequest.response_format,
+      // 添加消息内容记录，但排除系统消息以保持日志简洁
+      messages: moderationMessages.filter(msg => msg.role !== 'system').map(msg => ({
+        role: msg.role,
+        content: typeof msg.content === 'string' && msg.content.length > 100 
+          ? msg.content.substring(0, 100) + '...' 
+          : msg.content
+      }))
+    });
 
     try {
       const checkResponse = await axios.post(
@@ -321,24 +415,47 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
         firstProviderConfig
       );
 
+      // 解析审核结果
       const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
+      
+      // 记录详细的审核日志
+      const logId = logModerationResult(
+        selectedModel, 
+        moderationRequest, 
+        checkResponse, 
+        moderationResult, 
+        moderationResult.isViolation === true
+      );
+      
+      // 如果内容违规，抛出错误
       if (moderationResult.isViolation === true) {
-        throw {
+        const violationError = {
           error: {
-            message: "检测到违规内容，请修改后重试",
+            message: `检测到违规内容，请修改后重试 (ID: ${logId})`,
             type: ErrorTypes.INVALID_REQUEST,
-            code: ErrorCodes.CONTENT_VIOLATION
+            code: ErrorCodes.CONTENT_VIOLATION,
+            details: {
+              riskLevel: moderationResult.riskLevel,
+              logId: logId
+            }
           }
         };
+        throw violationError;
       }
 
-      return true;
+      return {
+        passed: true,
+        logId: logId,
+        riskLevel: moderationResult.riskLevel
+      };
     } catch (error) {
-      console.error('Moderation error with model:', selectedModel, error);
-      // 如果是API错误而不是内容违规，可以考虑重试其他模型
-      if (error.error?.code !== ErrorCodes.CONTENT_VIOLATION) {
+      // 如果错误已经是我们格式化过的违规错误，直接抛出
+      if (error.error?.code === ErrorCodes.CONTENT_VIOLATION) {
         throw error;
       }
+      
+      console.error('Moderation error with model:', selectedModel, error);
+      // 其他API错误
       throw error;
     }
   } catch (error) {
@@ -403,8 +520,11 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     // 先执行审核
     let moderationPassed = false;
     try {
-      await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
+      const moderationResult = await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
       moderationPassed = true;
+      // 可以在响应头中添加审核ID，方便追踪
+      res.setHeader('X-Moderation-ID', moderationResult.logId);
+      res.setHeader('X-Risk-Level', moderationResult.riskLevel);
     } catch (moderationError) {
       if (moderationError.error?.code === "content_violation") {
         res.write(`data: ${JSON.stringify(moderationError)}\n\n`);
@@ -495,8 +615,11 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     // 先执行审核
     let moderationPassed = false;
     try {
-      await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
+      const moderationResult = await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
       moderationPassed = true;
+      // 可以在响应头中添加审核ID，方便追踪
+      res.setHeader('X-Moderation-ID', moderationResult.logId);
+      res.setHeader('X-Risk-Level', moderationResult.riskLevel);
     } catch (moderationError) {
       if (moderationError.error?.code === "content_violation") {
         return res.status(403).json(moderationError);
