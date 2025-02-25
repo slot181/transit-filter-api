@@ -54,6 +54,7 @@ async function retryRequest(requestFn, maxTime) {
       const nonRetryableStatuses = [400, 401, 403, 404, 422];
       if (error.nonRetryable || (error.response && nonRetryableStatuses.includes(error.response.status))) {
         console.log('Non-retryable error detected, stopping retries');
+        // 保留完整的错误信息
         throw error;
       }
       
@@ -75,6 +76,15 @@ async function retryRequest(requestFn, maxTime) {
         
         // 标记为重试超时错误并保留原始错误信息
         error.isRetryTimeout = true;
+        
+        // 确保错误对象包含完整的响应数据
+        if (lastError && lastError.response && !error.response) {
+          error.response = lastError.response;
+        }
+        if (lastError && lastError.originalResponse && !error.originalResponse) {
+          error.originalResponse = lastError.originalResponse;
+        }
+        
         throw error;
       }
       
@@ -185,22 +195,37 @@ function handleError(error) {
     message: error.message,
     response: error.response?.data,
     status: error.response?.status,
-    statusText: error.response?.statusText
+    statusText: error.response?.statusText,
+    originalResponse: error.originalResponse // 检查是否有增强的错误信息
   });
 
   // 如果有服务提供商的原始错误响应，优先使用它
   if (error.response?.data?.error) {
     return {
       error: {
-        message: error.response.data.error.message,
+        message: error.response.data.error.message || "服务提供商错误",
         type: error.response.data.error.type || ErrorTypes.SERVICE,
-        code: error.response.status || 500
+        code: error.response.status || 500,
+        provider_error: error.response.data.error // 保留原始错误信息
+      }
+    };
+  }
+  
+  // 如果有增强的错误响应，使用它
+  if (error.originalResponse?.data?.error) {
+    return {
+      error: {
+        message: error.originalResponse.data.error.message || "服务提供商错误",
+        type: error.originalResponse.data.error.type || ErrorTypes.SERVICE,
+        code: error.originalResponse.status || 500,
+        provider_error: error.originalResponse.data.error
       }
     };
   }
 
   // 提取原始错误信息
   let errorMessage = error.response?.data?.message  // 一般 REST API 错误
+    || error.originalResponse?.data?.message       // 增强的错误信息
     || error.message                               // 原生 Error 对象的消息
     || "服务器内部错误";                           // 默认错误信息
 
@@ -219,7 +244,8 @@ function handleError(error) {
     error: {
       message: errorMessage,
       type: error.response?.data?.error?.type || ErrorTypes.SERVICE,
-      code: error.response?.status || 500
+      code: error.response?.status || 500,
+      original_error: error.message // 添加原始错误信息
     }
   };
 }
@@ -290,7 +316,18 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
       status: error.response?.status
     });
 
-    // 直接抛出原始错误，保留完整的错误信息
+    // 增强错误对象，确保保留完整的错误信息
+    if (error.response) {
+      // 确保错误对象包含完整的响应数据
+      error.originalResponse = {
+        data: error.response.data,
+        status: error.response.status,
+        statusText: error.response.statusText,
+        headers: error.response.headers
+      };
+    }
+
+    // 直接抛出增强后的错误对象
     throw error;
   }
 }
