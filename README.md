@@ -34,7 +34,8 @@
 1. 复制环境变量模板并填写配置
    ```bash
    cp .env.example .env
-   # 编辑.env文件，填写必要的配置
+   # 编辑.env文件，填写必要的配置信息
+   # 必须配置AUTH_KEY和提供商相关信息，否则服务将无法正常工作
    ```
 
 2. 使用Docker Compose启动服务
@@ -45,6 +46,11 @@
 3. 查看日志
    ```bash
    docker-compose logs -f
+   ```
+
+4. 验证服务是否正常运行
+   ```bash
+   curl http://localhost:3000/v1/models
    ```
 
 ### 手动构建和运行

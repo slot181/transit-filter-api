@@ -2,6 +2,9 @@ FROM node:18-alpine
 
 WORKDIR /api
 
+# 安装curl用于健康检查
+RUN apk add --no-cache curl
+
 # 复制package.json和package-lock.json
 COPY package*.json ./
 
