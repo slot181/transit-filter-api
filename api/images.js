@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { handleError, ErrorTypes, ErrorCodes } = require('./completions.js');
+const { config, ErrorTypes, ErrorCodes, handleError } = require('./config.js');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -22,7 +22,7 @@ module.exports = async (req, res) => {
   }
 
   const authKey = req.headers.authorization?.replace('Bearer ', '');
-  const validAuthKey = process.env.AUTH_KEY;
+  const validAuthKey = config.authKey;
 
   if (!authKey || authKey !== validAuthKey) {
     return res.status(401).json({
@@ -75,10 +75,10 @@ module.exports = async (req, res) => {
     });
   }
 
-  const SECOND_PROVIDER_URL = process.env.SECOND_PROVIDER_URL;
-  const SECOND_PROVIDER_KEY = process.env.SECOND_PROVIDER_KEY;
+  const secondProviderUrl = config.secondProvider.url;
+  const secondProviderKey = config.secondProvider.key;
 
-  if (!SECOND_PROVIDER_URL || !SECOND_PROVIDER_KEY) {
+  if (!secondProviderUrl || !secondProviderKey) {
     return res.status(500).json({
       error: {
         message: "服务配置缺失",
@@ -90,11 +90,11 @@ module.exports = async (req, res) => {
 
   try {
     const response = await axios.post(
-      `${SECOND_PROVIDER_URL}/v1/images/generations`,
+      `${secondProviderUrl}/v1/images/generations`,
       { prompt, n: n || 1, size: size || '512x512' },
       {
         headers: {
-          'Authorization': `Bearer ${SECOND_PROVIDER_KEY}`,
+          'Authorization': `Bearer ${secondProviderKey}`,
           'Content-Type': 'application/json'
         }
       }

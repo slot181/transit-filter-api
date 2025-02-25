@@ -1,32 +1,35 @@
 // completions.js
 
 const axios = require('axios');
+const { config, ErrorTypes, ErrorCodes, handleError } = require('./config.js');
 
-const MAX_RETRY_TIME = parseInt(process.env.MAX_RETRY_TIME || '30000'); // 最大重试时间控制
-const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '5000'); // 重试间隔时间控制
-const STREAM_TIMEOUT = parseInt(process.env.STREAM_TIMEOUT || '60000'); // 流式超时控制
-const MAX_RETRY_COUNT = parseInt(process.env.MAX_RETRY_COUNT || '5'); // 最大重试次数控制
+// 用于负载均衡的模型索引计数器
+let moderationModelIndex = 0;
 
-// 错误类型常量
-const ErrorTypes = {
-  INVALID_REQUEST: 'invalid_request_error',    // 请求参数错误
-  AUTHENTICATION: 'authentication_error',       // 认证错误
-  PERMISSION: 'permission_error',              // 权限错误
-  RATE_LIMIT: 'rate_limit_error',             // 频率限制
-  API: 'api_error',                           // API错误
-  SERVICE: 'service_error'                    // 服务错误
-};
-
-// 错误码常量
-const ErrorCodes = {
-  INVALID_AUTH_KEY: 'invalid_auth_key',         // 无效的认证密钥
-  CONTENT_VIOLATION: 'content_violation',        // 内容违规
-  RETRY_TIMEOUT: 'retry_timeout',               // 重试超时
-  STREAM_TIMEOUT: 'stream_timeout',             // 流式响应超时
-  SERVICE_UNAVAILABLE: 'service_unavailable',    // 服务不可用
-  INTERNAL_ERROR: 'internal_error',              // 内部错误
-  INVALID_TEMPERATURE: 'invalid_temperature'   // 无效的temperature参数
-};
+// 负载均衡选择模型的函数
+function selectModerationModel(strategy = 'round-robin') {
+  const models = config.firstProvider.models;
+  
+  // 如果没有配置模型或只有一个模型，直接返回
+  if (models.length <= 1) {
+    return models[0];
+  }
+  
+  // 根据策略选择模型
+  switch (strategy) {
+    case 'random':
+      // 随机选择一个模型
+      const randomIndex = Math.floor(Math.random() * models.length);
+      return models[randomIndex];
+      
+    case 'round-robin':
+    default:
+      // 轮询选择模型
+      const model = models[moderationModelIndex];
+      moderationModelIndex = (moderationModelIndex + 1) % models.length;
+      return model;
+  }
+}
 
 // 添加重试函数
 async function retryRequest(requestFn, maxTime) {
@@ -67,11 +70,11 @@ async function retryRequest(requestFn, maxTime) {
       return await tryRequest();
     } catch (error) {
       const elapsedTime = Date.now() - startTime;
-      const nextRetryTime = elapsedTime + RETRY_DELAY;
+      const nextRetryTime = elapsedTime + config.timeouts.retryDelay;
       
-      if (nextRetryTime >= maxTime || retryCount >= MAX_RETRY_COUNT) {
+      if (nextRetryTime >= maxTime || retryCount >= config.timeouts.maxRetryCount) {
         const retryType = nextRetryTime >= maxTime ? 'time limit' : 'count limit';
-        const retryValue = nextRetryTime >= maxTime ? maxTime + 'ms' : MAX_RETRY_COUNT;
+        const retryValue = nextRetryTime >= maxTime ? maxTime + 'ms' : config.timeouts.maxRetryCount;
         console.log(`[${requestFn.name || 'Unknown'}] Max retry ${retryType} (${retryValue}) reached`);
         
         // 标记为重试超时错误并保留原始错误信息
@@ -88,8 +91,8 @@ async function retryRequest(requestFn, maxTime) {
         throw error;
       }
       
-      console.log(`Waiting ${RETRY_DELAY}ms before next retry...`);
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      console.log(`Waiting ${config.timeouts.retryDelay}ms before next retry...`);
+      await new Promise(resolve => setTimeout(resolve, config.timeouts.retryDelay));
     }
   }
 }
@@ -188,68 +191,6 @@ function preprocessMessages(messages) {
   });
 }
 
-// 处理错误并返回格式化后的错误信息
-function handleError(error) {
-  // 记录详细的错误信息用于调试
-  console.error('Error details:', {
-    message: error.message,
-    response: error.response?.data,
-    status: error.response?.status,
-    statusText: error.response?.statusText,
-    originalResponse: error.originalResponse // 检查是否有增强的错误信息
-  });
-
-  // 如果有服务提供商的原始错误响应，优先使用它
-  if (error.response?.data?.error) {
-    return {
-      error: {
-        message: error.response.data.error.message || "服务提供商错误",
-        type: error.response.data.error.type || ErrorTypes.SERVICE,
-        code: error.response.status || 500,
-        provider_error: error.response.data.error // 保留原始错误信息
-      }
-    };
-  }
-  
-  // 如果有增强的错误响应，使用它
-  if (error.originalResponse?.data?.error) {
-    return {
-      error: {
-        message: error.originalResponse.data.error.message || "服务提供商错误",
-        type: error.originalResponse.data.error.type || ErrorTypes.SERVICE,
-        code: error.originalResponse.status || 500,
-        provider_error: error.originalResponse.data.error
-      }
-    };
-  }
-
-  // 提取原始错误信息
-  let errorMessage = error.response?.data?.message  // 一般 REST API 错误
-    || error.originalResponse?.data?.message       // 增强的错误信息
-    || error.message                               // 原生 Error 对象的消息
-    || "服务器内部错误";                           // 默认错误信息
-
-  // 对于重试超时的特殊处理
-  if (error.isRetryTimeout) {
-    errorMessage = "服务请求超时，请稍后再试";
-  }
-
-  // 对于流式响应超时的特殊处理
-  if (error.isStreamTimeout) {
-    errorMessage = "流式响应超时，请稍后再试";
-  }
-
-  // 返回格式化的错误响应
-  return {
-    error: {
-      message: errorMessage,
-      type: error.response?.data?.error?.type || ErrorTypes.SERVICE,
-      code: error.response?.status || 500,
-      original_error: error.message // 添加原始错误信息
-    }
-  };
-}
-
 // 发送到第二个运营商的请求处理
 async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
   // 检查o3模型的temperature限制
@@ -332,7 +273,11 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
   }
 }
 
-async function performModeration(messages, firstProviderUrl, firstProviderModel, firstProviderConfig) {
+async function performModeration(messages, firstProviderUrl, firstProviderConfig) {
+  // 选择一个审核模型
+  const selectedModel = selectModerationModel('round-robin');
+  console.log(`Using moderation model: ${selectedModel}`);
+  
   const moderationMessages = [
     { role: "system", content: DEFAULT_SYSTEM_CONTENT },
     ...messages,
@@ -341,7 +286,7 @@ async function performModeration(messages, firstProviderUrl, firstProviderModel,
 
   const moderationRequest = {
     messages: moderationMessages,
-    model: firstProviderModel,
+    model: selectedModel, // 使用选定的模型
     temperature: 0,
     max_tokens: 100,
     response_format: {
@@ -349,30 +294,43 @@ async function performModeration(messages, firstProviderUrl, firstProviderModel,
     }
   };
 
-  console.log('Moderation Request:', moderationRequest);
+  console.log('Moderation Request:', {
+    model: moderationRequest.model,
+    temperature: moderationRequest.temperature,
+    max_tokens: moderationRequest.max_tokens
+  });
 
-  const checkResponse = await axios.post(
-    firstProviderUrl + '/v1/chat/completions',
-    moderationRequest,
-    firstProviderConfig
-  );
+  try {
+    const checkResponse = await axios.post(
+      firstProviderUrl + '/v1/chat/completions',
+      moderationRequest,
+      firstProviderConfig
+    );
 
-  const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
-  if (moderationResult.isViolation === true) {
-    throw {
-      error: {
-        message: "检测到违规内容，请修改后重试",
-        type: ErrorTypes.INVALID_REQUEST,
-        code: ErrorCodes.CONTENT_VIOLATION
-      }
-    };
+    const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
+    if (moderationResult.isViolation === true) {
+      throw {
+        error: {
+          message: "检测到违规内容，请修改后重试",
+          type: ErrorTypes.INVALID_REQUEST,
+          code: ErrorCodes.CONTENT_VIOLATION
+        }
+      };
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Moderation error with model:', selectedModel, error);
+    // 如果是API错误而不是内容违规，可以考虑重试其他模型
+    if (error.error?.code !== ErrorCodes.CONTENT_VIOLATION) {
+      throw error;
+    }
+    throw error;
   }
-
-  return true;
 }
 
 // 处理流式响应的函数
-async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
+async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderKey, secondProviderKey) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -380,7 +338,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
   // 添加流式数据超时控制
   let lastDataTime = Date.now();
   const checkInterval = setInterval(() => {
-    if (Date.now() - lastDataTime > STREAM_TIMEOUT) {
+    if (Date.now() - lastDataTime > config.timeouts.streamTimeout) {
       clearInterval(checkInterval);
       res.write(`data: ${JSON.stringify({
         error: {
@@ -402,7 +360,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(MAX_RETRY_TIME * 0.5)
+      timeout: Math.floor(config.timeouts.maxRetryTime * 0.5)
     };
 
     const secondProviderConfig = {
@@ -411,13 +369,13 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(MAX_RETRY_TIME * 0.5)
+      timeout: Math.floor(config.timeouts.maxRetryTime * 0.5)
     };
 
     // 先执行审核
     let moderationPassed = false;
     try {
-      await performModeration(textMessages, firstProviderUrl, firstProviderModel, firstProviderConfig);
+      await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
       moderationPassed = true;
     } catch (moderationError) {
       if (moderationError.error?.code === "content_violation") {
@@ -433,7 +391,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     if (moderationPassed) {
       const response = await retryRequest(
         () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
-        MAX_RETRY_TIME
+        config.timeouts.maxRetryTime
       );
       
       // 替换原来的 response.data.pipe(res) 为自定义的流处理
@@ -485,7 +443,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 }
 
 // 处理非流式响应的函数
-async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderModel, firstProviderKey, secondProviderKey) {
+async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderKey, secondProviderKey) {
   try {
     const textMessages = preprocessMessages(req.body.messages);
     const firstProviderConfig = {
@@ -494,7 +452,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(MAX_RETRY_TIME * 0.5)
+      timeout: Math.floor(config.timeouts.maxRetryTime * 0.5)
     };
 
     const secondProviderConfig = {
@@ -503,13 +461,13 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      timeout: Math.floor(MAX_RETRY_TIME * 0.5)
+      timeout: Math.floor(config.timeouts.maxRetryTime * 0.5)
     };
 
     // 先执行审核
     let moderationPassed = false;
     try {
-      await performModeration(textMessages, firstProviderUrl, firstProviderModel, firstProviderConfig);
+      await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
       moderationPassed = true;
     } catch (moderationError) {
       if (moderationError.error?.code === "content_violation") {
@@ -522,7 +480,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     if (moderationPassed) {
       const response = await retryRequest(
         () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig), 
-        MAX_RETRY_TIME
+        config.timeouts.maxRetryTime
       );
       res.json(response.data);
     }
@@ -566,7 +524,7 @@ module.exports = async (req, res) => {
   }
 
   const authKey = req.headers.authorization?.replace('Bearer ', '');
-  const validAuthKey = process.env.AUTH_KEY;
+  const validAuthKey = config.authKey;
 
   if (!authKey || authKey !== validAuthKey) {
     return res.status(401).json({
@@ -578,11 +536,10 @@ module.exports = async (req, res) => {
     });
   }
 
-  const firstProviderUrl = process.env.FIRST_PROVIDER_URL;
-  const firstProviderKey = process.env.FIRST_PROVIDER_KEY;
-  const firstProviderModel = process.env.FIRST_PROVIDER_MODEL;
-  const secondProviderUrl = process.env.SECOND_PROVIDER_URL;
-  const secondProviderKey = process.env.SECOND_PROVIDER_KEY;
+  const firstProviderUrl = config.firstProvider.url;
+  const firstProviderKey = config.firstProvider.key;
+  const secondProviderUrl = config.secondProvider.url;
+  const secondProviderKey = config.secondProvider.key;
 
   try {
     if (req.body.stream) {
@@ -591,7 +548,6 @@ module.exports = async (req, res) => {
         res,
         firstProviderUrl,
         secondProviderUrl,
-        firstProviderModel,
         firstProviderKey,
         secondProviderKey
       );
@@ -601,7 +557,6 @@ module.exports = async (req, res) => {
         res,
         firstProviderUrl,
         secondProviderUrl,
-        firstProviderModel,
         firstProviderKey,
         secondProviderKey
       );

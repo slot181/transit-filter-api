@@ -1,43 +1,5 @@
 const axios = require('axios');
-
-function handleError(error) {
-  console.error('Error:', error.message);
-
-  // 优先处理服务商返回的错误结构
-  if (error.response?.data) {
-    const providerError = error.response.data.error || error.response.data;
-    return {
-      error: {
-        message: providerError.message || error.message,
-        type: providerError.type || "api_error",
-        code: providerError.code || error.response.status,
-        param: providerError.param,
-        // 保留原始错误信息用于调试
-        provider_details: error.response.data 
-      }
-    };
-  }
-
-  // 处理网络连接类错误
-  if (error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED') {
-    return {
-      error: {
-        message: "服务暂时不可用，请稍后重试",
-        type: "connection_error",
-        code: 503
-      }
-    };
-  }
-
-  // 通用错误格式
-  return {
-    error: {
-      message: error.message || '服务器内部错误',
-      type: "internal_error",
-      code: error.status || 500
-    }
-  };
-}
+const { config, handleError } = require('./config.js');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -59,8 +21,8 @@ module.exports = async (req, res) => {
     });
   }
 
-  const secondProviderUrl = process.env.SECOND_PROVIDER_URL;
-  const secondProviderKey = process.env.SECOND_PROVIDER_KEY;
+  const secondProviderUrl = config.secondProvider.url;
+  const secondProviderKey = config.secondProvider.key;
 
   if (!secondProviderUrl || !secondProviderKey) {
     return res.status(500).json({
