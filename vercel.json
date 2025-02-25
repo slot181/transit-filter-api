@@ -1,26 +1,26 @@
 {
   "version": 2,
   "functions": {
-    "api/*.js": {
+    "app/*.js": {
       "maxDuration": 60
     }
   },
   "routes": [
     {
       "src": "/v1/chat/completions",
-      "dest": "/api/completions"
+      "dest": "/app/completions"
     },
     {
       "src": "/v1/images/generations", 
-      "dest": "/api/images"
+      "dest": "/app/images"
     },
     {
       "src": "/v1/audio/transcriptions", 
-      "dest": "/api/audio"
+      "dest": "/app/audio"
     },
     {
       "src": "/v1/models", 
-      "dest": "/api/models"
+      "dest": "/app/models"
     }
   ]
 }

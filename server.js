@@ -1,9 +1,9 @@
 const http = require('http');
 const url = require('url');
-const completions = require('./api/completions');
-const images = require('./api/images');
-const audio = require('./api/audio');
-const models = require('./api/models');
+const completions = require('./app/completions');
+const images = require('./app/images');
+const audio = require('./app/audio');
+const models = require('./app/models');
 
 // 创建请求处理函数
 async function processRequest(req, res) {
@@ -79,13 +79,13 @@ const server = http.createServer(processRequest);
 
 // 启动服务器
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`服务器已启动，监听端口 ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`服务器已启动，监听所有网络接口，端口 ${PORT}`);
   console.log(`API路径:`);
-  console.log(`- 聊天补全: http://localhost:${PORT}/v1/chat/completions`);
-  console.log(`- 图像生成: http://localhost:${PORT}/v1/images/generations`);
-  console.log(`- 音频转录: http://localhost:${PORT}/v1/audio/transcriptions`);
-  console.log(`- 模型列表: http://localhost:${PORT}/v1/models`);
+  console.log(`- 聊天补全: http://<服务器IP>:${PORT}/v1/chat/completions`);
+  console.log(`- 图像生成: http://<服务器IP>:${PORT}/v1/images/generations`);
+  console.log(`- 音频转录: http://<服务器IP>:${PORT}/v1/audio/transcriptions`);
+  console.log(`- 模型列表: http://<服务器IP>:${PORT}/v1/models`);
 });
 
 // 处理进程终止信号

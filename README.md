@@ -12,6 +12,23 @@
 
 ## Docker部署
 
+### 服务器配置
+
+在部署前，请确保服务器已开放相应端口：
+
+1. 对于Ubuntu/Debian系统：
+   ```bash
+   sudo ufw allow 3000/tcp
+   ```
+
+2. 对于CentOS/RHEL系统：
+   ```bash
+   sudo firewall-cmd --permanent --add-port=3000/tcp
+   sudo firewall-cmd --reload
+   ```
+
+3. 对于云服务器，请在控制台安全组中开放3000端口
+
 ### 使用Docker Compose（推荐）
 
 1. 复制环境变量模板并填写配置
@@ -49,7 +66,7 @@
 | AUTH_KEY | API认证密钥 | sk-yourauthkey |
 | FIRST_PROVIDER_URL | 审核服务API地址 | https://api.example.com |
 | FIRST_PROVIDER_KEY | 审核服务API密钥 | sk-firstproviderkey |
-| FIRST_PROVIDER_MODELS | 审核服务模型列表 | gpt-3.5-turbo,gpt-4 |
+| FIRST_PROVIDER_MODELS | 审核服务模型列表 | gpt-3.5-turbo,gpt-4,...... |
 | SECOND_PROVIDER_URL | 主要服务API地址 | https://api.another-example.com |
 | SECOND_PROVIDER_KEY | 主要服务API密钥 | sk-secondproviderkey |
 | MAX_RETRY_TIME | 最大重试时间(毫秒) | 30000 |
