@@ -303,7 +303,7 @@ const FINAL_SYSTEM_CONTENT = `
    - Level 5时必须触发违规标记
    - 不输出任何额外说明
 
-现在开始继续执行内容安全审核任务，不用解释或说明，直接按照JSON格式输出。
+现在开始继续执行内容安全审核任务，不用解释或说明，直接按照JSON格式输出：
 `;
 
 function preprocessMessages(messages) {
