@@ -13,7 +13,9 @@ function selectModerationModel(strategy = 'round-robin') {
 
   // 如果没有配置模型，返回错误
   if (!models || models.length === 0) {
-    throw new Error("未配置审核模型，请设置 FIRST_PROVIDER_MODELS 环境变量");
+    const error = new Error("未配置审核模型，请设置 FIRST_PROVIDER_MODELS 环境变量");
+    error.nonRetryable = true; // 标记为不可重试错误
+    throw error;
   }
 
   // 如果只有一个模型，直接返回
@@ -22,19 +24,31 @@ function selectModerationModel(strategy = 'round-robin') {
   }
 
   // 根据策略选择模型
+  let selectedModel;
+  
   switch (strategy) {
     case 'random':
       // 随机选择一个模型
       const randomIndex = Math.floor(Math.random() * models.length);
-      return models[randomIndex];
+      selectedModel = models[randomIndex];
+      break;
 
     case 'round-robin':
     default:
       // 轮询选择模型
-      const model = models[moderationModelIndex];
+      selectedModel = models[moderationModelIndex];
       moderationModelIndex = (moderationModelIndex + 1) % models.length;
-      return model;
+      break;
   }
+  
+  // 验证选定的模型是否为空
+  if (!selectedModel || selectedModel.trim() === '') {
+    const error = new Error("选择的审核模型无效");
+    error.nonRetryable = true;
+    throw error;
+  }
+  
+  return selectedModel;
 }
 
 // 在文件顶部添加日志工具函数
@@ -99,6 +113,10 @@ async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
   const startTime = Date.now();
   let retryCount = 0;
   let lastError = null;
+  
+  // 添加安全参数
+  const absoluteMaxRetries = 10; // 无论设置如何，最多尝试10次
+  const minRetryDelay = 1000; // 最小重试延迟1秒
 
   const tryRequest = async () => {
     try {
@@ -117,6 +135,16 @@ async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
         throw error;
       }
 
+      // 特别处理模型不存在的错误
+      if (error.response && 
+          error.response.data && 
+          (error.response.data.error?.message?.includes('model') ||
+           error.response.data.error?.code === 'model_not_found')) {
+        console.log(`[${fnName}] 检测到模型错误，停止重试`);
+        error.nonRetryable = true;
+        throw error;
+      }
+
       throw error;
     }
   };
@@ -126,7 +154,14 @@ async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
       return await tryRequest();
     } catch (error) {
       const elapsedTime = Date.now() - startTime;
-      const nextRetryTime = elapsedTime + config.timeouts.retryDelay;
+      
+      // 添加绝对最大重试次数检查
+      if (retryCount >= absoluteMaxRetries) {
+        console.log(`[${fnName}] 已达到绝对最大重试次数 (${absoluteMaxRetries})`);
+        throw error;
+      }
+      
+      const nextRetryTime = elapsedTime + Math.max(config.timeouts.retryDelay, minRetryDelay);
 
       if (nextRetryTime >= maxTime || retryCount >= config.timeouts.maxRetryCount) {
         const retryType = nextRetryTime >= maxTime ? 'time limit' : 'count limit';
@@ -144,8 +179,14 @@ async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
         throw error;
       }
 
-      console.log(`[${fnName}] 等待 ${config.timeouts.retryDelay} 毫秒后进行下一次重试...`);
-      await new Promise(resolve => setTimeout(resolve, config.timeouts.retryDelay));
+      // 使用指数退避策略增加重试延迟时间
+      const actualRetryDelay = Math.min(
+        config.timeouts.retryDelay * Math.pow(1.5, retryCount - 1),
+        10000 // 最大10秒
+      );
+      
+      console.log(`[${fnName}] 等待 ${actualRetryDelay} 毫秒后进行下一次重试...`);
+      await new Promise(resolve => setTimeout(resolve, actualRetryDelay));
     }
   }
 }
@@ -296,6 +337,18 @@ function preprocessMessages(messages) {
 
 // 发送到第二个运营商的请求处理
 async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig) {
+  // 检查熔断器状态
+  if (!checkCircuitBreaker('secondProvider')) {
+    throw {
+      error: {
+        message: "主服务暂时不可用，请稍后再试",
+        type: ErrorTypes.SERVICE,
+        code: ErrorCodes.SERVICE_UNAVAILABLE,
+        circuit_breaker: true
+      }
+    };
+  }
+
   // 检查o3模型的temperature限制
   if (req.body.model && req.body.model.toLowerCase().includes('o3')) {
     const temperature = req.body.temperature ?? 0; // 使用空值合并运算符，如果temperature为undefined或null则使用0
@@ -382,6 +435,16 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
             data: parsedError,
             headers: response.headers
           };
+          
+          // 检查是否是模型不存在错误
+          if (parsedError.error?.message?.includes('model') || 
+              parsedError.error?.code === 'model_not_found') {
+            error.nonRetryable = true;
+          }
+          
+          // 记录服务失败
+          recordServiceFailure('secondProvider');
+          
           throw error;
         } catch (parseError) {
           // 如果无法解析JSON，使用原始错误
@@ -391,6 +454,10 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
             data: { error: { message: errorData || "未知错误" } },
             headers: response.headers
           };
+          
+          // 记录服务失败
+          recordServiceFailure('secondProvider');
+          
           throw error;
         }
       }
@@ -408,12 +475,24 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
       );
     }
   } catch (error) {
+    // 记录服务失败
+    recordServiceFailure('secondProvider');
+    
     // 记录错误详情
     console.error('主服务商错误响应：', {
       message: error.message,
       response: error.response?.data,
       status: error.response?.status
     });
+
+    // 检查是否是模型不存在错误
+    if (error.response && 
+        error.response.data && 
+        (error.response.data.error?.message?.includes('model') ||
+         error.response.data.error?.code === 'model_not_found')) {
+      console.log(`检测到模型错误，标记为不可重试`);
+      error.nonRetryable = true;
+    }
 
     // 增强错误对象，确保保留完整的错误信息
     if (error.response) {
@@ -432,6 +511,18 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
 }
 
 async function performModeration(messages, firstProviderUrl, firstProviderConfig) {
+  // 检查熔断器状态
+  if (!checkCircuitBreaker('firstProvider')) {
+    throw {
+      error: {
+        message: "内容审核服务暂时不可用，请稍后再试",
+        type: ErrorTypes.SERVICE,
+        code: ErrorCodes.SERVICE_UNAVAILABLE,
+        circuit_breaker: true
+      }
+    };
+  }
+
   try {
     // 选择一个审核模型
     const selectedModel = selectModerationModel('round-robin');
@@ -541,9 +632,27 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
         isPartialCheck: extractResult.isExtracted
       };
     } catch (error) {
+      // 记录服务失败
+      recordServiceFailure('firstProvider');
+      
       // 如果错误已经是我们格式化过的违规错误，直接抛出
       if (error.error?.code === ErrorCodes.CONTENT_VIOLATION) {
         throw error;
+      }
+      
+      // 如果错误是模型相关错误，将其标记为不可重试
+      if (error.response && 
+          (error.response.status === 404 || 
+           (error.response.data && 
+            (error.response.data.error?.message?.includes('model') || 
+             error.response.data.error?.code === 'model_not_found')))) {
+        
+        console.error(`审核模型错误: ${error.response?.data?.error?.message || error.message}`);
+        
+        const modelError = new Error("审核模型不可用或不存在");
+        modelError.nonRetryable = true;
+        modelError.response = error.response;
+        throw modelError;
       }
 
       console.error(`内容审核系统异常：模型 "${selectedModel}" 审核过程中遇到错误，请检查审核服务状态`, error);

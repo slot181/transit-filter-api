@@ -34,7 +34,12 @@ async function rateLimitMiddleware(req, res, path) {
                 details: {
                     limit: rateLimitInfo.limit,
                     remaining: rateLimitInfo.remaining,
-                    reset: rateLimitInfo.reset
+                    reset: rateLimitInfo.reset,
+                    // 添加更详细的限制信息
+                    path_limit: rateLimitInfo.details.path.limit,
+                    path_current: rateLimitInfo.details.path.current,
+                    ip_limit: rateLimitInfo.details.globalIp.limit,
+                    ip_current: rateLimitInfo.details.globalIp.current
                 }
             }
         }));

@@ -19,7 +19,8 @@ const ErrorCodes = {
   SERVICE_UNAVAILABLE: 'service_unavailable',  // 服务不可用
   INTERNAL_ERROR: 'internal_error',            // 内部错误
   INVALID_TEMPERATURE: 'invalid_temperature',  // 无效的temperature参数
-  RATE_LIMIT_EXCEEDED: 'rate_limit_exceeded'   // 超过速率限制
+  RATE_LIMIT_EXCEEDED: 'rate_limit_exceeded',  // 超过速率限制
+  MODEL_NOT_FOUND: 'model_not_found'           // 模型不存在
 };
 
 // 集中管理的配置
@@ -57,6 +58,24 @@ const config = {
     images: parseInt(process.env.IMAGES_RPM || '20'),
     audio: parseInt(process.env.AUDIO_RPM || '20'),
     models: parseInt(process.env.MODELS_RPM || '100')
+  },
+  
+  // 服务健康状态监控
+  serviceHealth: {
+    firstProvider: {
+      isHealthy: true,
+      failureCount: 0,
+      lastFailureTime: 0,
+      circuitBreakerTripped: false,
+      circuitBreakerResetTime: 0
+    },
+    secondProvider: {
+      isHealthy: true,
+      failureCount: 0,
+      lastFailureTime: 0,
+      circuitBreakerTripped: false,
+      circuitBreakerResetTime: 0
+    }
   }
 };
 
@@ -134,9 +153,48 @@ function handleError(error) {
   };
 }
 
+// 检查熔断器状态
+function checkCircuitBreaker(provider) {
+  const health = config.serviceHealth[provider];
+  
+  // 如果熔断器已触发，检查是否可以重置
+  if (health.circuitBreakerTripped) {
+    if (Date.now() > health.circuitBreakerResetTime) {
+      console.log(`[熔断器] ${provider} 服务熔断器重置`);
+      health.circuitBreakerTripped = false;
+      health.failureCount = 0;
+      return true;
+    }
+    return false;
+  }
+  
+  return true;
+}
+
+// 记录服务失败
+function recordServiceFailure(provider) {
+  const health = config.serviceHealth[provider];
+  const now = Date.now();
+  
+  // 增加失败计数
+  health.failureCount++;
+  health.lastFailureTime = now;
+  
+  // 如果10秒内失败次数超过100次，触发熔断器
+  if (health.failureCount > 100) {
+    console.error(`[熔断器] ${provider} 服务在短时间内失败次数过多，触发熔断器`);
+    health.circuitBreakerTripped = true;
+    // 熔断器保持60秒
+    health.circuitBreakerResetTime = now + 60000;
+    health.failureCount = 0;
+  }
+}
+
 module.exports = {
   config,
   ErrorTypes,
   ErrorCodes,
-  handleError
+  handleError,
+  checkCircuitBreaker,
+  recordServiceFailure
 };
