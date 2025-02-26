@@ -737,26 +737,6 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
         // 替换原来的 response.data.pipe(res) 为自定义的流处理
         const stream = response.data;
-        let isStreamEnded = false;
-
-        // 创建一个函数来清理所有事件监听器
-        const cleanupStream = () => {
-          if (isStreamEnded) return;
-          isStreamEnded = true;
-          
-          try {
-            clearInterval(checkInterval);
-            
-            // 移除所有事件监听器
-            stream.removeAllListeners('data');
-            stream.removeAllListeners('end');
-            stream.removeAllListeners('error');
-            
-            console.log(`[${requestId}] 流式响应已清理`);
-          } catch (cleanupError) {
-            console.error(`[${requestId}] 清理流式响应时出错:`, cleanupError);
-          }
-        };
 
         stream.on('data', (chunk) => {
           lastDataTime = Date.now(); // 更新最后收到数据的时间
@@ -764,16 +744,14 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
             res.write(chunk);
           } catch (writeError) {
             console.error(`[${requestId}] 写入流数据时出错:`, writeError);
-            cleanupStream();
+            clearInterval(checkInterval);
           }
         });
 
         stream.on('end', () => {
           console.log(`[${requestId}] 流式响应正常结束`);
-          cleanupStream();
-          if (!isStreamEnded) {
-            res.end();
-          }
+          clearInterval(checkInterval);
+          res.end();
         });
 
         stream.on('error', (error) => {
@@ -783,7 +761,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
             status: error.response?.status
           });
 
-          cleanupStream();
+          clearInterval(checkInterval);
 
           // 使用handleError处理错误，确保返回原始错误信息
           const errorResponse = handleError(error);
@@ -792,12 +770,9 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
           try {
             res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
             res.write('data: [DONE]\n\n');
+            res.end();
           } catch (writeError) {
             console.error(`[${requestId}] 写入错误响应时出错:`, writeError);
-          }
-          
-          if (!isStreamEnded) {
-            res.end();
           }
         });
       } catch (error) {
