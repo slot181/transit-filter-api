@@ -7,8 +7,39 @@ const models = require('./api/models');
 const rateLimitMiddleware = require('./utils/rateLimitMiddleware');
 const { ErrorTypes } = require('./api/config');
 
+const { globalRequestCounter } = require('./api/config');
+
 // 创建请求处理函数
 async function processRequest(req, res) {
+  // 检查全局熔断器状态
+  if (globalRequestCounter.isTripped()) {
+    res.statusCode = 429;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      error: {
+        message: "服务器检测到异常请求模式，已临时限制请求。请稍后再试。",
+        type: "rate_limit_error",
+        code: "global_circuit_breaker_tripped"
+      }
+    }));
+    return;
+  }
+  
+  // 增加全局请求计数
+  const isGlobalLimited = globalRequestCounter.increment();
+  if (isGlobalLimited) {
+    res.statusCode = 429;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      error: {
+        message: "服务器检测到异常请求模式，已临时限制请求。请稍后再试。",
+        type: "rate_limit_error",
+        code: "global_circuit_breaker_tripped"
+      }
+    }));
+    return;
+  }
+  
   // 解析请求体
   let body = '';
   req.on('data', chunk => {

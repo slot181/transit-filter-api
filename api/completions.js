@@ -1,7 +1,7 @@
 // completions.js
 
 const axios = require('axios');
-const { config, ErrorTypes, ErrorCodes, handleError, checkCircuitBreaker, recordServiceFailure } = require('./config.js');
+const { config, ErrorTypes, ErrorCodes, handleError, checkCircuitBreaker, recordServiceFailure, globalRequestCounter } = require('./config.js');
 const rateLimitMiddleware = require('../utils/rateLimitMiddleware');
 
 // 用于负载均衡的模型索引计数器
@@ -104,10 +104,16 @@ function logModerationResult(model, request, response, result, isViolation) {
 
 // 添加重试函数
 async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
-  // 检查是否启用重试功能
-  if (!config.timeouts.enableRetry) {
+  // 强制检查重试功能是否启用
+  if (config.timeouts.enableRetry !== true) {
     console.log(`[${fnName}] 重试功能已禁用，直接执行请求`);
-    return await requestFn();
+    try {
+      return await requestFn();
+    } catch (error) {
+      console.log(`[${fnName}] 请求失败，不重试`);
+      error.nonRetryable = true; // 标记为不可重试
+      throw error;
+    }
   }
 
   const startTime = Date.now();
@@ -485,6 +491,11 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
       status: error.response?.status
     });
 
+    // 默认将所有错误标记为不可重试，除非明确启用了重试功能
+    if (config.timeouts.enableRetry !== true) {
+      error.nonRetryable = true;
+    }
+    
     // 检查是否是模型不存在错误
     if (error.response && 
         error.response.data && 
@@ -743,10 +754,14 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     // 审核通过后，只重试第二个提供商的请求
     if (moderationPassed) {
       try {
+        // 添加请求ID用于跟踪
+        const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+        console.log(`[${requestId}] 开始处理流式请求`);
+        
         const response = await retryRequest(
           () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
           config.timeouts.maxRetryTime,
-          "sendToSecondProvider-Stream"
+          `sendToSecondProvider-Stream-${requestId}`
         );
 
         // 检查是否是错误响应
@@ -758,31 +773,63 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
             data: response.data,
             headers: response.headers
           };
+          error.nonRetryable = true; // 标记为不可重试
+          console.log(`[${requestId}] 主服务商返回非200状态码: ${response.status}`);
           throw error;
         }
+        
+        console.log(`[${requestId}] 成功获取流式响应`);
 
         // 替换原来的 response.data.pipe(res) 为自定义的流处理
         const stream = response.data;
+        let isStreamEnded = false;
+        const requestId = `stream_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+
+        // 创建一个函数来清理所有事件监听器
+        const cleanupStream = () => {
+          if (isStreamEnded) return;
+          isStreamEnded = true;
+          
+          try {
+            clearInterval(checkInterval);
+            
+            // 移除所有事件监听器
+            stream.removeAllListeners('data');
+            stream.removeAllListeners('end');
+            stream.removeAllListeners('error');
+            
+            console.log(`[${requestId}] 流式响应已清理`);
+          } catch (cleanupError) {
+            console.error(`[${requestId}] 清理流式响应时出错:`, cleanupError);
+          }
+        };
 
         stream.on('data', (chunk) => {
           lastDataTime = Date.now(); // 更新最后收到数据的时间
-          res.write(chunk);
+          try {
+            res.write(chunk);
+          } catch (writeError) {
+            console.error(`[${requestId}] 写入流数据时出错:`, writeError);
+            cleanupStream();
+          }
         });
 
         stream.on('end', () => {
-          clearInterval(checkInterval);
-          res.end();
+          console.log(`[${requestId}] 流式响应正常结束`);
+          cleanupStream();
+          if (!isStreamEnded) {
+            res.end();
+          }
         });
 
         stream.on('error', (error) => {
-          clearInterval(checkInterval);
-
-          // 记录错误详情
-          console.error('Stream error:', {
+          console.error(`[${requestId}] 流式响应错误:`, {
             message: error.message,
             response: error.response?.data,
             status: error.response?.status
           });
+
+          cleanupStream();
 
           // 使用handleError处理错误，确保返回原始错误信息
           const errorResponse = handleError(error);
@@ -792,21 +839,38 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
             res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
             res.write('data: [DONE]\n\n');
           } catch (writeError) {
-            console.error('Error writing stream error response:', writeError);
+            console.error(`[${requestId}] 写入错误响应时出错:`, writeError);
           }
-          res.end();
+          
+          if (!isStreamEnded) {
+            res.end();
+          }
         });
       } catch (error) {
         clearInterval(checkInterval);
         console.error('Stream request error:', error);
         
+        // 标记错误为不可重试
+        if (!error.nonRetryable) {
+          error.nonRetryable = true;
+        }
+        
         // 使用handleError处理错误，确保返回原始错误信息
         const errorResponse = handleError(error);
         
         // 以流式格式发送错误
-        res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
-        res.write('data: [DONE]\n\n');
-        res.end();
+        try {
+          res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+        } catch (writeError) {
+          console.error('Error writing final error response:', writeError);
+          try {
+            res.end();
+          } catch (endError) {
+            console.error('Error ending response after error:', endError);
+          }
+        }
       }
     }
   } catch (error) {
@@ -1107,13 +1171,25 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
 
     // 审核通过后，只重试第二个提供商的请求
     if (moderationPassed) {
-      const response = await retryRequest(
-        () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
-        config.timeouts.maxRetryTime,
-        "sendToSecondProvider-Normal"
-      );
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify(response.data));
+      // 添加请求ID用于跟踪
+      const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+      console.log(`[${requestId}] 开始处理普通请求`);
+      
+      try {
+        const response = await retryRequest(
+          () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
+          config.timeouts.maxRetryTime,
+          `sendToSecondProvider-Normal-${requestId}`
+        );
+        
+        console.log(`[${requestId}] 成功获取普通响应`);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(response.data));
+      } catch (error) {
+        // 确保错误被标记为不可重试
+        error.nonRetryable = true;
+        throw error;
+      }
     }
 
   } catch (error) {
@@ -1157,6 +1233,23 @@ module.exports = async (req, res) => {
         message: "不支持的请求方法",
         type: ErrorTypes.INVALID_REQUEST,
         code: "method_not_allowed"
+      }
+    }));
+    return;
+  }
+  
+  // 检查全局熔断器状态
+  if (globalRequestCounter.isTripped()) {
+    res.statusCode = 429;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      error: {
+        message: "服务器检测到异常请求模式，已临时限制请求。请稍后再试。",
+        type: ErrorTypes.RATE_LIMIT,
+        code: ErrorCodes.RATE_LIMIT_EXCEEDED,
+        details: {
+          reason: "global_circuit_breaker_tripped"
+        }
       }
     }));
     return;

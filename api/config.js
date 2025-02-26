@@ -23,6 +23,59 @@ const ErrorCodes = {
   MODEL_NOT_FOUND: 'model_not_found'           // 模型不存在
 };
 
+// 全局请求计数器，用于检测异常请求模式
+const globalRequestCounter = {
+  count: 0,
+  startTime: Date.now(),
+  threshold: 1000, // 1秒内超过1000个请求视为异常
+  isCircuitBreakerTripped: false,
+  circuitBreakerResetTime: 0,
+  
+  // 增加请求计数
+  increment() {
+    this.count++;
+    
+    // 每秒重置一次计数器
+    const now = Date.now();
+    if (now - this.startTime > 1000) {
+      console.log(`请求计数器重置: ${this.count} 请求/秒`);
+      this.count = 0;
+      this.startTime = now;
+    }
+    
+    // 检查是否触发熔断器
+    if (this.count > this.threshold && !this.isCircuitBreakerTripped) {
+      console.error(`检测到异常请求模式: ${this.count} 请求/秒，触发全局熔断器`);
+      this.isCircuitBreakerTripped = true;
+      this.circuitBreakerResetTime = now + 60000; // 熔断器保持60秒
+    }
+    
+    // 检查是否重置熔断器
+    if (this.isCircuitBreakerTripped && now > this.circuitBreakerResetTime) {
+      console.log(`全局熔断器重置`);
+      this.isCircuitBreakerTripped = false;
+    }
+    
+    return this.isCircuitBreakerTripped;
+  },
+  
+  // 检查熔断器状态
+  isTripped() {
+    // 如果熔断器已触发，检查是否可以重置
+    if (this.isCircuitBreakerTripped) {
+      const now = Date.now();
+      if (now > this.circuitBreakerResetTime) {
+        console.log(`全局熔断器重置`);
+        this.isCircuitBreakerTripped = false;
+        this.count = 0;
+        return false;
+      }
+      return true;
+    }
+    return false;
+  }
+};
+
 // 集中管理的配置
 const config = {
   // API认证
@@ -49,7 +102,7 @@ const config = {
     retryDelay: parseInt(process.env.RETRY_DELAY || '2000'),
     streamTimeout: parseInt(process.env.STREAM_TIMEOUT || '300000'),
     maxRetryCount: parseInt(process.env.MAX_RETRY_COUNT || '5'),
-    enableRetry: process.env.ENABLE_RETRY !== 'false' // 默认为 false，需要重试的话设置为 true
+    enableRetry: process.env.ENABLE_RETRY === 'true' // 明确需要设置为'true'才启用重试
   },
   
   // 速率限制设置
@@ -196,5 +249,6 @@ module.exports = {
   ErrorCodes,
   handleError,
   checkCircuitBreaker,
-  recordServiceFailure
+  recordServiceFailure,
+  globalRequestCounter
 };
