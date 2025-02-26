@@ -562,7 +562,10 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
 
     // 构造审核消息
     const moderationMessages = [
-      { role: "system", content: DEFAULT_SYSTEM_CONTENT },
+      { 
+        role: "system", 
+        content: DEFAULT_SYSTEM_CONTENT + "\n\n# INTERNAL_MODERATION_FLAG: DO_NOT_MODERATE_THIS_IS_ALREADY_A_MODERATION_REQUEST #"
+      },
       {
         role: "user",
         content: `以下是需要审核的${extractResult.isExtracted ? '部分截取的' : '完整'}对话内容，请仔细审核每一部分：\n\n${allMessagesText}`
@@ -687,7 +690,7 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
 }
 
 // 处理流式响应的函数
-async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderKey, secondProviderKey) {
+async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderKey, secondProviderKey, skipModeration = false) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -730,25 +733,27 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     };
 
     // 先执行审核
-    let moderationPassed = false;
-    try {
-      const moderationResult = await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
-      moderationPassed = true;
-      // 可以在响应头中添加审核ID，方便追踪
-      res.setHeader('X-Content-Review-ID', moderationResult.logId);
-      res.setHeader('X-Risk-Level', moderationResult.riskLevel);
-      // 如果审核结果包含部分审核标记，添加到响应头
-      if (moderationResult.isPartialCheck) {
-        res.setHeader('X-Content-Review-Partial', 'true');
+    let moderationPassed = skipModeration; // 如果skipModeration为true，直接跳过审核
+    if (!skipModeration) {
+      try {
+        const moderationResult = await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
+        moderationPassed = true;
+        // 可以在响应头中添加审核ID，方便追踪
+        res.setHeader('X-Content-Review-ID', moderationResult.logId);
+        res.setHeader('X-Risk-Level', moderationResult.riskLevel);
+        // 如果审核结果包含部分审核标记，添加到响应头
+        if (moderationResult.isPartialCheck) {
+          res.setHeader('X-Content-Review-Partial', 'true');
+        }
+      } catch (moderationError) {
+        if (moderationError.error?.code === "content_violation") {
+          res.write(`data: ${JSON.stringify(moderationError)}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+        throw moderationError;
       }
-    } catch (moderationError) {
-      if (moderationError.error?.code === "content_violation") {
-        res.write(`data: ${JSON.stringify(moderationError)}\n\n`);
-        res.write('data: [DONE]\n\n');
-        res.end();
-        return;
-      }
-      throw moderationError;
     }
 
     // 审核通过后，只重试第二个提供商的请求
@@ -1125,7 +1130,7 @@ function extractRandomSegments(messages, maxLength = 30000) {
 }
 
 // 处理非流式响应的函数
-async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderKey, secondProviderKey) {
+async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderKey, secondProviderKey, skipModeration = false) {
   try {
     const textMessages = preprocessMessages(req.body.messages);
     const firstProviderConfig = {
@@ -1147,25 +1152,27 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     };
 
     // 先执行审核
-    let moderationPassed = false;
-    try {
-      const moderationResult = await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
-      moderationPassed = true;
-      // 可以在响应头中添加审核ID，方便追踪
-      res.setHeader('X-Content-Review-ID', moderationResult.logId);
-      res.setHeader('X-Risk-Level', moderationResult.riskLevel);
-      // 如果审核结果包含部分审核标记，添加到响应头
-      if (moderationResult.isPartialCheck) {
-        res.setHeader('X-Content-Review-Partial', 'true');
+    let moderationPassed = skipModeration; // 如果skipModeration为true，直接跳过审核
+    if (!skipModeration) {
+      try {
+        const moderationResult = await performModeration(textMessages, firstProviderUrl, firstProviderConfig);
+        moderationPassed = true;
+        // 可以在响应头中添加审核ID，方便追踪
+        res.setHeader('X-Content-Review-ID', moderationResult.logId);
+        res.setHeader('X-Risk-Level', moderationResult.riskLevel);
+        // 如果审核结果包含部分审核标记，添加到响应头
+        if (moderationResult.isPartialCheck) {
+          res.setHeader('X-Content-Review-Partial', 'true');
+        }
+      } catch (moderationError) {
+        if (moderationError.error?.code === "content_violation") {
+          res.statusCode = 403;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(moderationError));
+          return;
+        }
+        throw moderationError;
       }
-    } catch (moderationError) {
-      if (moderationError.error?.code === "content_violation") {
-        res.statusCode = 403;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(moderationError));
-        return;
-      }
-      throw moderationError;
     }
 
     // 审核通过后，只重试第二个提供商的请求
@@ -1252,6 +1259,36 @@ module.exports = async (req, res) => {
       }
     }));
     return;
+  }
+
+  // 检查是否是内部审核请求，以避免无限循环
+  if (req.body && req.body.messages) {
+    const isInternalModerationRequest = req.body.messages.some(msg => 
+      msg.role === 'system' && 
+      typeof msg.content === 'string' && 
+      msg.content.includes('INTERNAL_MODERATION_FLAG: DO_NOT_MODERATE_THIS_IS_ALREADY_A_MODERATION_REQUEST')
+    );
+
+    if (isInternalModerationRequest) {
+      console.log('检测到内部审核请求，跳过审核步骤以避免无限循环');
+      // 直接处理请求，跳过审核
+      if (req.body.stream) {
+        await handleStream(
+          req, res, null, 
+          config.secondProvider.url, null, 
+          config.secondProvider.key, 
+          true // 标记为跳过审核
+        );
+      } else {
+        await handleNormal(
+          req, res, null, 
+          config.secondProvider.url, null, 
+          config.secondProvider.key,
+          true // 标记为跳过审核
+        );
+      }
+      return;
+    }
   }
 
   // 添加速率限制检查
