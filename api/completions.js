@@ -126,11 +126,7 @@ async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
         const retryValue = nextRetryTime >= maxTime ? maxTime + 'ms' : config.timeouts.maxRetryCount;
         console.log(`[${fnName}] 已达到最大${retryType}重试次数 (${retryValue})`);
 
-
-        // 标记为重试超时错误并保留原始错误信息
-        error.isRetryTimeout = true;
-
-        // 确保错误对象包含完整的响应数据
+        // 确保错误对象包含完整的响应数据，但不添加isRetryTimeout标记
         if (lastError && lastError.response && !error.response) {
           error.response = lastError.response;
         }
@@ -672,14 +668,8 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
             status: error.response?.status
           });
 
-          // 构建符合OpenAI格式的错误响应
-          const errorResponse = {
-            error: {
-              message: error.message || "流式传输错误",
-              type: ErrorTypes.SERVICE,
-              code: ErrorCodes.INTERNAL_ERROR
-            }
-          };
+          // 使用handleError处理错误，确保返回原始错误信息
+          const errorResponse = handleError(error);
           
           // 直接处理并发送错误响应
           try {
@@ -694,7 +684,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         clearInterval(checkInterval);
         console.error('Stream request error:', error);
         
-        // 使用handleError处理错误，确保返回符合OpenAI格式的错误
+        // 使用handleError处理错误，确保返回原始错误信息
         const errorResponse = handleError(error);
         
         // 以流式格式发送错误

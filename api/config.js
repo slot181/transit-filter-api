@@ -113,16 +113,6 @@ function handleError(error) {
     || error.message
     || "服务器内部错误";
 
-  // 对于重试超时的特殊处理
-  if (error.isRetryTimeout) {
-    errorMessage = "服务请求超时，请稍后再试";
-  }
-
-  // 对于流式响应超时的特殊处理
-  if (error.isStreamTimeout) {
-    errorMessage = "流式响应超时，请稍后再试";
-  }
-
   // 返回格式化的错误响应
   return {
     error: {
