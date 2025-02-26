@@ -783,7 +783,6 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         // 替换原来的 response.data.pipe(res) 为自定义的流处理
         const stream = response.data;
         let isStreamEnded = false;
-        const requestId = `stream_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
 
         // 创建一个函数来清理所有事件监听器
         const cleanupStream = () => {
