@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { config, handleError } = require('./config.js');
+const rateLimitMiddleware = require('../utils/rateLimitMiddleware');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -23,6 +24,11 @@ module.exports = async (req, res) => {
       }
     }));
     return;
+  }
+  
+  // 添加速率限制检查
+  if (await rateLimitMiddleware(req, res, '/v1/models')) {
+    return; // 如果被限制，直接返回
   }
 
   const secondProviderUrl = config.secondProvider.url;

@@ -79,6 +79,10 @@
 | RETRY_DELAY | 重试延迟(毫秒) | 5000 |
 | STREAM_TIMEOUT | 流式响应超时(毫秒) | 60000 |
 | MAX_RETRY_COUNT | 最大重试次数 | 5 |
+| CHAT_RPM | 聊天补全API的每分钟请求限制 | 60 |
+| IMAGES_RPM | 图像生成API的每分钟请求限制 | 20 |
+| AUDIO_RPM | 音频转录API的每分钟请求限制 | 20 |
+| MODELS_RPM | 模型列表API的每分钟请求限制 | 100 |
 | PORT | 服务器端口 | 3000 |
 
 ## API使用
@@ -94,3 +98,33 @@
 ```
 Authorization: Bearer YOUR_AUTH_KEY
 ```
+
+## Vercel 部署
+
+1. 安装 Vercel CLI
+   ```bash
+   npm install -g vercel
+   ```
+
+2. 登录 Vercel
+   ```bash
+   vercel login
+   ```
+
+3. 部署到 Vercel
+   ```bash
+   vercel
+   ```
+
+4. 设置环境变量
+   在 Vercel 控制台中，为你的项目设置以下环境变量：
+   - AUTH_KEY
+   - FIRST_PROVIDER_URL
+   - FIRST_PROVIDER_KEY
+   - FIRST_PROVIDER_MODELS
+   - SECOND_PROVIDER_URL
+   - SECOND_PROVIDER_KEY
+   - CHAT_RPM
+   - IMAGES_RPM
+   - AUDIO_RPM
+   - MODELS_RPM

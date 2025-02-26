@@ -18,7 +18,8 @@ const ErrorCodes = {
   STREAM_TIMEOUT: 'stream_timeout',            // 流式响应超时
   SERVICE_UNAVAILABLE: 'service_unavailable',  // 服务不可用
   INTERNAL_ERROR: 'internal_error',            // 内部错误
-  INVALID_TEMPERATURE: 'invalid_temperature'   // 无效的temperature参数
+  INVALID_TEMPERATURE: 'invalid_temperature',  // 无效的temperature参数
+  RATE_LIMIT_EXCEEDED: 'rate_limit_exceeded'   // 超过速率限制
 };
 
 // 集中管理的配置
@@ -43,10 +44,18 @@ const config = {
   
   // 重试和超时设置
   timeouts: {
-    maxRetryTime: parseInt(process.env.MAX_RETRY_TIME || '30000'),
-    retryDelay: parseInt(process.env.RETRY_DELAY || '5000'),
-    streamTimeout: parseInt(process.env.STREAM_TIMEOUT || '60000'),
+    maxRetryTime: parseInt(process.env.MAX_RETRY_TIME || '90000'),
+    retryDelay: parseInt(process.env.RETRY_DELAY || '2000'),
+    streamTimeout: parseInt(process.env.STREAM_TIMEOUT || '300000'),
     maxRetryCount: parseInt(process.env.MAX_RETRY_COUNT || '5')
+  },
+  
+  // 速率限制设置
+  rateLimits: {
+    chat: parseInt(process.env.CHAT_RPM || '60'),
+    images: parseInt(process.env.IMAGES_RPM || '20'),
+    audio: parseInt(process.env.AUDIO_RPM || '20'),
+    models: parseInt(process.env.MODELS_RPM || '100')
   }
 };
 

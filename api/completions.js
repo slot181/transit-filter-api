@@ -2,6 +2,7 @@
 
 const axios = require('axios');
 const { config, ErrorTypes, ErrorCodes, handleError } = require('./config.js');
+const rateLimitMiddleware = require('../utils/rateLimitMiddleware');
 
 // 用于负载均衡的模型索引计数器
 let moderationModelIndex = 0;
@@ -1044,6 +1045,11 @@ module.exports = async (req, res) => {
       }
     }));
     return;
+  }
+
+  // 添加速率限制检查
+  if (await rateLimitMiddleware(req, res, '/v1/chat/completions')) {
+    return; // 如果被限制，直接返回
   }
 
   const authKey = req.headers.authorization?.replace('Bearer ', '');

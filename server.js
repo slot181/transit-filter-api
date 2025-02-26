@@ -4,6 +4,8 @@ const completions = require('./api/completions');
 const images = require('./api/images');
 const audio = require('./api/audio');
 const models = require('./api/models');
+const rateLimitMiddleware = require('./utils/rateLimitMiddleware');
+const { ErrorTypes } = require('./api/config');
 
 // 创建请求处理函数
 async function processRequest(req, res) {
@@ -39,14 +41,21 @@ async function processRequest(req, res) {
     const path = parsedUrl.pathname;
 
     try {
+      // 使用新的速率限制中间件
+      let isLimited = false;
+      
       if (path === '/v1/chat/completions') {
-        await completions(req, res);
+        isLimited = await rateLimitMiddleware(req, res, path);
+        if (!isLimited) await completions(req, res);
       } else if (path === '/v1/images/generations') {
-        await images(req, res);
+        isLimited = await rateLimitMiddleware(req, res, path);
+        if (!isLimited) await images(req, res);
       } else if (path === '/v1/audio/transcriptions') {
-        await audio(req, res);
+        isLimited = await rateLimitMiddleware(req, res, path);
+        if (!isLimited) await audio(req, res);
       } else if (path === '/v1/models') {
-        await models(req, res);
+        isLimited = await rateLimitMiddleware(req, res, path);
+        if (!isLimited) await models(req, res);
       } else {
         // 处理404
         res.statusCode = 404;
@@ -82,10 +91,10 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`服务器已启动，监听所有网络接口，端口 ${PORT}`);
   console.log(`API路径:`);
-  console.log(`- 聊天补全: http://localhost:${PORT}/v1/chat/completions`);
-  console.log(`- 图像生成: http://localhost:${PORT}/v1/images/generations`);
-  console.log(`- 音频转录: http://localhost:${PORT}/v1/audio/transcriptions`);
-  console.log(`- 模型列表: http://localhost:${PORT}/v1/models`);
+  console.log(`- 聊天补全: http://localhost:${PORT}/v1/chat/completions (RPM: ${process.env.CHAT_RPM || '60'})`);
+  console.log(`- 图像生成: http://localhost:${PORT}/v1/images/generations (RPM: ${process.env.IMAGES_RPM || '20'})`);
+  console.log(`- 音频转录: http://localhost:${PORT}/v1/audio/transcriptions (RPM: ${process.env.AUDIO_RPM || '20'})`);
+  console.log(`- 模型列表: http://localhost:${PORT}/v1/models (RPM: ${process.env.MODELS_RPM || '100'})`);
 });
 
 // 处理进程终止信号
