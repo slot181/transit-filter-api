@@ -1,7 +1,7 @@
 // completions.js
 
 const axios = require('axios');
-const { config, ErrorTypes, ErrorCodes, handleError } = require('./config.js');
+const { config, ErrorTypes, ErrorCodes, handleError, checkCircuitBreaker, recordServiceFailure } = require('./config.js');
 const rateLimitMiddleware = require('../utils/rateLimitMiddleware');
 
 // 用于负载均衡的模型索引计数器
