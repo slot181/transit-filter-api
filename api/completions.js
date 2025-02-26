@@ -9,24 +9,24 @@ let moderationModelIndex = 0;
 // 负载均衡选择模型的函数
 function selectModerationModel(strategy = 'round-robin') {
   const models = config.firstProvider.models;
-  
+
   // 如果没有配置模型，返回错误
   if (!models || models.length === 0) {
     throw new Error("未配置审核模型，请设置 FIRST_PROVIDER_MODELS 环境变量");
   }
-  
+
   // 如果只有一个模型，直接返回
   if (models.length === 1) {
     return models[0];
   }
-  
+
   // 根据策略选择模型
   switch (strategy) {
     case 'random':
       // 随机选择一个模型
       const randomIndex = Math.floor(Math.random() * models.length);
       return models[randomIndex];
-      
+
     case 'round-robin':
     default:
       // 轮询选择模型
@@ -40,13 +40,13 @@ function selectModerationModel(strategy = 'round-robin') {
 function logModerationResult(model, request, response, result, isViolation) {
   const timestamp = new Date().toISOString();
   const logId = `mod_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-  
+
   // 提取用户消息内容用于日志记录
   const userMessages = request.messages
     .filter(msg => msg.role === 'user')
     .map(msg => typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content))
     .join('\n---\n');
-  
+
   // 构建详细的日志对象
   const logData = {
     id: logId,
@@ -60,8 +60,8 @@ function logModerationResult(model, request, response, result, isViolation) {
       // 记录所有原始消息，包括角色信息
       originalMessages: request.messages.map(msg => ({
         role: msg.role,
-        content: typeof msg.content === 'string' && msg.content.length > 100 
-          ? msg.content.substring(0, 100) + '...' 
+        content: typeof msg.content === 'string' && msg.content.length > 100
+          ? msg.content.substring(0, 100) + '...'
           : msg.content
       }))
     },
@@ -74,7 +74,7 @@ function logModerationResult(model, request, response, result, isViolation) {
       riskLevel: result?.riskLevel || 0
     }
   };
-  
+
   // 使用不同的日志级别区分违规和非违规内容
   if (isViolation) {
     console.warn(`[CONTENT-VIOLATION][${logId}] 内容违规，风险等级: ${result?.riskLevel || 'unknown'}`);
@@ -83,7 +83,7 @@ function logModerationResult(model, request, response, result, isViolation) {
     console.log(`[CONTENT-PASS][${logId}] 内容审核通过，风险等级: ${result?.riskLevel || 'unknown'}`);
     console.log(JSON.stringify(logData, null, 2));
   }
-  
+
   return logId;
 }
 
@@ -92,50 +92,52 @@ async function retryRequest(requestFn, maxTime) {
   const startTime = Date.now();
   let retryCount = 0;
   let lastError = null;
-  
+
   const tryRequest = async () => {
     try {
       return await requestFn();
     } catch (error) {
       retryCount++;
       lastError = error;
-      
+
       // 记录错误信息
-      console.log(`Request failed (attempt ${retryCount}) at ${new Date().toISOString()}:`, {
+      console.log(`请求失败 (第${retryCount}次尝试) 时间：${new Date().toISOString()}:`, {
         error: {
           message: error.message,
           response: error.response?.data,
           status: error.response?.status
         }
       });
-      
+
+
       // 检查是否是标记为不需要重试的错误或状态码表明不需要重试
       const nonRetryableStatuses = [400, 401, 403, 404, 422];
       if (error.nonRetryable || (error.response && nonRetryableStatuses.includes(error.response.status))) {
-        console.log('Non-retryable error detected, stopping retries');
+        console.log('检测到不可重试的错误，停止重试');
         // 保留完整的错误信息
         throw error;
       }
-      
+
       throw error;
     }
   };
-  
+
   while (true) {
     try {
       return await tryRequest();
     } catch (error) {
       const elapsedTime = Date.now() - startTime;
       const nextRetryTime = elapsedTime + config.timeouts.retryDelay;
-      
+
       if (nextRetryTime >= maxTime || retryCount >= config.timeouts.maxRetryCount) {
         const retryType = nextRetryTime >= maxTime ? 'time limit' : 'count limit';
         const retryValue = nextRetryTime >= maxTime ? maxTime + 'ms' : config.timeouts.maxRetryCount;
-        console.log(`[${requestFn.name || 'Unknown'}] Max retry ${retryType} (${retryValue}) reached`);
-        
+        console.log(`[${requestFn.name || 'Unknown'}] 已达到最大${retryType}重试次数 (${retryValue})`);
+
+
         // 标记为重试超时错误并保留原始错误信息
         error.isRetryTimeout = true;
-        
+
         // 确保错误对象包含完整的响应数据
         if (lastError && lastError.response && !error.response) {
           error.response = lastError.response;
@@ -143,11 +145,11 @@ async function retryRequest(requestFn, maxTime) {
         if (lastError && lastError.originalResponse && !error.originalResponse) {
           error.originalResponse = lastError.originalResponse;
         }
-        
+
         throw error;
       }
-      
-      console.log(`Waiting ${config.timeouts.retryDelay}ms before next retry...`);
+
+      console.log(`等待 ${config.timeouts.retryDelay}毫秒后进行下一次重试...`);
       await new Promise(resolve => setTimeout(resolve, config.timeouts.retryDelay));
     }
   }
@@ -338,7 +340,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
   }
 
   // 记录请求信息（不包含敏感数据）
-  console.log('Second provider request:', {
+  console.log('第二个服务商请求：', {
     model: secondProviderRequest.model,
     stream: secondProviderRequest.stream,
     temperature: secondProviderRequest.temperature,
@@ -357,7 +359,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
     return response;
   } catch (error) {
     // 记录错误详情
-    console.error('Second provider error:', {
+    console.error('第二个服务商错误：', {
       message: error.message,
       response: error.response?.data,
       status: error.response?.status
@@ -384,7 +386,7 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
     // 选择一个审核模型
     const selectedModel = selectModerationModel('round-robin');
     console.log(`Using moderation model: ${selectedModel}`);
-    
+
     // 提取客户端的所有消息内容，无论角色是什么
     const clientMessagesContent = messages.map(msg => {
       return {
@@ -392,26 +394,26 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
         content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
       };
     });
-    
+
     // 应用随机截取策略处理超长文本
     const extractResult = extractRandomSegments(clientMessagesContent);
-    
+
     // 如果进行了截取，记录相关信息
     if (extractResult.isExtracted) {
       console.log(`内容审核: 原始长度 ${extractResult.originalLength} 字符，截取后 ${extractResult.extractedLength} 字符`);
     }
-    
+
     // 构建一个包含所有内容的单一消息，确保所有内容都被审核
-    const allMessagesText = extractResult.messages.map(msg => 
+    const allMessagesText = extractResult.messages.map(msg =>
       `[${msg.role.toUpperCase()}]: ${msg.content}`
     ).join('\n\n');
-    
+
     // 构造审核消息
     const moderationMessages = [
       { role: "system", content: DEFAULT_SYSTEM_CONTENT },
-      { 
-        role: "user", 
-        content: `以下是需要审核的${extractResult.isExtracted ? '部分截取的' : '完整'}对话内容，请仔细审核每一部分：\n\n${allMessagesText}` 
+      {
+        role: "user",
+        content: `以下是需要审核的${extractResult.isExtracted ? '部分截取的' : '完整'}对话内容，请仔细审核每一部分：\n\n${allMessagesText}`
       },
       { role: "user", content: FINAL_SYSTEM_CONTENT }
     ];
@@ -426,7 +428,7 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
       }
     };
 
-    console.log('Moderation Request:', {
+    console.log('审核请求：', {
       model: moderationRequest.model,
       temperature: moderationRequest.temperature,
       max_tokens: moderationRequest.max_tokens,
@@ -455,16 +457,16 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
 
       // 解析审核结果
       const moderationResult = JSON.parse(checkResponse.data.choices[0].message.content);
-      
+
       // 记录详细的审核日志
       const logId = logModerationResult(
-        selectedModel, 
-        moderationRequest, 
-        checkResponse, 
-        moderationResult, 
+        selectedModel,
+        moderationRequest,
+        checkResponse,
+        moderationResult,
         moderationResult.isViolation === true
       );
-      
+
       // 如果内容违规，抛出错误
       if (moderationResult.isViolation === true) {
         const violationError = {
@@ -493,8 +495,8 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
       if (error.error?.code === ErrorCodes.CONTENT_VIOLATION) {
         throw error;
       }
-      
-      console.error('Moderation error with model:', selectedModel, error);
+
+      console.error(`内容审核系统异常：模型 "${selectedModel}" 审核过程中遇到错误，请检查审核服务状态`, error);
       // 其他API错误
       throw error;
     }
@@ -585,10 +587,10 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
         config.timeouts.maxRetryTime
       );
-      
+
       // 替换原来的 response.data.pipe(res) 为自定义的流处理
       const stream = response.data;
-    
+
       stream.on('data', (chunk) => {
         lastDataTime = Date.now(); // 更新最后收到数据的时间
         res.write(chunk);
@@ -601,7 +603,7 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
       stream.on('error', (error) => {
         clearInterval(checkInterval);
-        
+
         // 记录错误详情
         console.error('Stream error:', {
           message: error.message,
@@ -637,8 +639,8 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 // 计算消息总长度的函数
 function calculateTotalLength(messages) {
   return messages.reduce((total, msg) => {
-    const content = typeof msg.content === 'string' 
-      ? msg.content 
+    const content = typeof msg.content === 'string'
+      ? msg.content
       : JSON.stringify(msg.content);
     return total + content.length;
   }, 0);
@@ -647,7 +649,7 @@ function calculateTotalLength(messages) {
 // 随机截取文本的函数
 function extractRandomSegments(messages, maxLength = 30000) {
   const totalLength = calculateTotalLength(messages);
-  
+
   // 如果总长度小于最大长度，直接返回原始消息
   if (totalLength <= maxLength) {
     return {
@@ -657,26 +659,26 @@ function extractRandomSegments(messages, maxLength = 30000) {
       extractedLength: totalLength
     };
   }
-  
+
   console.log(`消息总长度(${totalLength})超过最大限制(${maxLength})，将进行随机截取`);
-  
+
   // 分离用户消息和非用户消息
   const userMessages = messages.filter(msg => msg.role === 'user');
   const nonUserMessages = messages.filter(msg => msg.role !== 'user');
-  
+
   // 为非用户消息预留最多50%的空间
   const nonUserMaxLength = Math.floor(maxLength * 0.5);
-  
+
   // 创建消息的副本，以便我们可以修改它
   const extractedMessages = [];
   let currentLength = 0;
-  
+
   // 首先处理非用户消息（系统消息、助手消息等）
   for (const msg of nonUserMessages) {
-    const content = typeof msg.content === 'string' 
-      ? msg.content 
+    const content = typeof msg.content === 'string'
+      ? msg.content
       : JSON.stringify(msg.content);
-    
+
     // 如果添加这条消息后仍在限制内，直接添加
     if (currentLength + content.length <= nonUserMaxLength) {
       extractedMessages.push({
@@ -688,9 +690,9 @@ function extractRandomSegments(messages, maxLength = 30000) {
       // 如果这条消息太长，截取部分内容
       const availableLength = nonUserMaxLength - currentLength;
       if (availableLength > 200) { // 确保至少有足够空间添加有意义的内容
-        const truncatedContent = content.substring(0, Math.floor(availableLength * 0.8)) + 
-                               "\n...[系统内容过长，已截取]...";
-        
+        const truncatedContent = content.substring(0, Math.floor(availableLength * 0.8)) +
+          "\n...[系统内容过长，已截取]...";
+
         extractedMessages.push({
           role: msg.role,
           content: truncatedContent
@@ -701,10 +703,10 @@ function extractRandomSegments(messages, maxLength = 30000) {
       break;
     }
   }
-  
+
   // 计算剩余可用于用户消息的长度
   const remainingLength = maxLength - currentLength;
-  
+
   // 如果没有用户消息，直接返回
   if (userMessages.length === 0) {
     return {
@@ -714,41 +716,41 @@ function extractRandomSegments(messages, maxLength = 30000) {
       extractedLength: currentLength
     };
   }
-  
+
   // 如果只有一条用户消息，处理这种特殊情况
   if (userMessages.length === 1) {
     const msg = userMessages[0];
-    const content = typeof msg.content === 'string' 
-      ? msg.content 
+    const content = typeof msg.content === 'string'
+      ? msg.content
       : JSON.stringify(msg.content);
-    
+
     if (content.length <= remainingLength) {
       // 如果消息长度在限制内，直接添加
       extractedMessages.push(msg);
     } else {
       // 随机截取策略：取开头、中间和结尾的部分
       const segmentLength = Math.floor(remainingLength / 3);
-      
+
       // 确保段落长度不超过剩余长度的三分之一
       const safeSegmentLength = Math.min(segmentLength, Math.floor(remainingLength / 3.5));
-      
+
       // 取开头部分
       const startSegment = content.substring(0, safeSegmentLength);
-      
+
       // 取中间随机部分
       const middleStart = Math.floor(Math.random() * (content.length - safeSegmentLength));
       const middleSegment = content.substring(middleStart, middleStart + safeSegmentLength);
-      
+
       // 取结尾部分
       const endSegment = content.substring(content.length - safeSegmentLength);
-      
+
       const extractedContent = `${startSegment}\n...[内容过长，已截取]...\n${middleSegment}\n...[内容过长，已截取]...\n${endSegment}`;
-      
+
       // 最后检查确保不超过剩余长度
       const finalContent = extractedContent.length > remainingLength
         ? extractedContent.substring(0, remainingLength - 30) + "...[已截断]"
         : extractedContent;
-      
+
       extractedMessages.push({
         role: 'user',
         content: finalContent
@@ -758,25 +760,25 @@ function extractRandomSegments(messages, maxLength = 30000) {
     // 多条用户消息，随机选择一些消息
     // 首先计算每条消息的长度
     const messageLengths = userMessages.map(msg => {
-      const content = typeof msg.content === 'string' 
-        ? msg.content 
+      const content = typeof msg.content === 'string'
+        ? msg.content
         : JSON.stringify(msg.content);
       return {
         message: msg,
         length: content.length
       };
     });
-    
+
     // 按照消息长度排序（优先选择较短的消息）
     messageLengths.sort((a, b) => a.length - b.length);
-    
+
     // 按照可用长度添加消息
     let usedLength = 0;
-    
+
     // 首先尝试添加完整的短消息
     for (let i = 0; i < messageLengths.length; i++) {
       const item = messageLengths[i];
-      
+
       // 如果消息可以完整添加
       if (usedLength + item.length <= remainingLength) {
         extractedMessages.push(item.message);
@@ -784,58 +786,58 @@ function extractRandomSegments(messages, maxLength = 30000) {
         // 标记为已处理
         messageLengths[i] = null;
       }
-      
+
       // 如果已经达到限制，停止添加
       if (usedLength >= remainingLength) break;
     }
-    
+
     // 如果还有剩余空间，尝试截取一些较长消息的片段
     if (usedLength < remainingLength) {
       // 过滤掉已处理的消息
       const remainingMessages = messageLengths.filter(item => item !== null);
-      
+
       // 随机打乱顺序，以获取更多样的内容
       remainingMessages.sort(() => Math.random() - 0.5);
-      
+
       for (const item of remainingMessages) {
         const availableLength = remainingLength - usedLength;
-        
+
         // 确保有足够空间添加有意义的内容
         if (availableLength < 200) break;
-        
-        const content = typeof item.message.content === 'string' 
-          ? item.message.content 
+
+        const content = typeof item.message.content === 'string'
+          ? item.message.content
           : JSON.stringify(item.message.content);
-        
+
         // 计算可以截取的内容长度
         const truncateLength = Math.min(availableLength - 50, Math.floor(content.length / 2));
-        
+
         if (truncateLength > 100) {
           // 截取开头部分
-          const extractedContent = content.substring(0, truncateLength) + 
-                                 "\n...[内容过长，已截取]...";
-          
+          const extractedContent = content.substring(0, truncateLength) +
+            "\n...[内容过长，已截取]...";
+
           extractedMessages.push({
             role: 'user',
             content: extractedContent
           });
-          
+
           usedLength += extractedContent.length;
-          
+
           // 如果已经达到限制，停止添加
           if (usedLength >= remainingLength) break;
         }
       }
     }
   }
-  
+
   // 计算最终提取的内容长度
   const extractedLength = calculateTotalLength(extractedMessages);
-  
+
   // 最后的安全检查：如果提取的内容仍然超过最大长度，强制截断
   if (extractedLength > maxLength) {
     console.warn(`警告：提取后的内容(${extractedLength})仍超过最大长度(${maxLength})，将强制截断`);
-    
+
     // 从提取的消息中移除最后一条用户消息
     for (let i = extractedMessages.length - 1; i >= 0; i--) {
       if (extractedMessages[i].role === 'user') {
@@ -843,10 +845,10 @@ function extractRandomSegments(messages, maxLength = 30000) {
         break;
       }
     }
-    
+
     // 重新计算长度
     const newExtractedLength = calculateTotalLength(extractedMessages);
-    
+
     // 如果仍然超过限制，添加一条警告消息
     if (newExtractedLength > maxLength) {
       return {
@@ -859,7 +861,7 @@ function extractRandomSegments(messages, maxLength = 30000) {
       };
     }
   }
-  
+
   return {
     messages: extractedMessages,
     isExtracted: true,
@@ -915,7 +917,7 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     // 审核通过后，只重试第二个提供商的请求
     if (moderationPassed) {
       const response = await retryRequest(
-        () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig), 
+        () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
         config.timeouts.maxRetryTime
       );
       res.setHeader('Content-Type', 'application/json');
