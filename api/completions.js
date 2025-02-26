@@ -88,7 +88,7 @@ function logModerationResult(model, request, response, result, isViolation) {
 }
 
 // 添加重试函数
-async function retryRequest(requestFn, maxTime) {
+async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
   const startTime = Date.now();
   let retryCount = 0;
   let lastError = null;
@@ -100,20 +100,12 @@ async function retryRequest(requestFn, maxTime) {
       retryCount++;
       lastError = error;
 
-      // 记录错误信息
-      console.log(`请求失败 (第${retryCount}次尝试) 时间：${new Date().toISOString()}:`, {
-        error: {
-          message: error.message,
-          response: error.response?.data,
-          status: error.response?.status
-        }
-      });
-
+      console.log(`[${fnName}] 请求失败 (第${retryCount}次尝试) 时间：${new Date().toISOString()}:`);
 
       // 检查是否是标记为不需要重试的错误或状态码表明不需要重试
       const nonRetryableStatuses = [400, 401, 403, 404, 422];
       if (error.nonRetryable || (error.response && nonRetryableStatuses.includes(error.response.status))) {
-        console.log('检测到不可重试的错误，停止重试');
+        console.log(`[${fnName}] 检测到不可重试的错误，停止重试`);
         // 保留完整的错误信息
         throw error;
       }
@@ -132,7 +124,7 @@ async function retryRequest(requestFn, maxTime) {
       if (nextRetryTime >= maxTime || retryCount >= config.timeouts.maxRetryCount) {
         const retryType = nextRetryTime >= maxTime ? 'time limit' : 'count limit';
         const retryValue = nextRetryTime >= maxTime ? maxTime + 'ms' : config.timeouts.maxRetryCount;
-        console.log(`[${requestFn.name || 'Unknown'}] 已达到最大${retryType}重试次数 (${retryValue})`);
+        console.log(`[${fnName}] 已达到最大${retryType}重试次数 (${retryValue})`);
 
 
         // 标记为重试超时错误并保留原始错误信息
@@ -149,7 +141,7 @@ async function retryRequest(requestFn, maxTime) {
         throw error;
       }
 
-      console.log(`等待 ${config.timeouts.retryDelay}毫秒后进行下一次重试...`);
+      console.log(`[${fnName}] 等待 ${config.timeouts.retryDelay} 毫秒后进行下一次重试...`);
       await new Promise(resolve => setTimeout(resolve, config.timeouts.retryDelay));
     }
   }
@@ -340,7 +332,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
   }
 
   // 记录请求信息（不包含敏感数据）
-  console.log('第二个服务商请求：', {
+  console.log('主服务商请求参数：', {
     model: secondProviderRequest.model,
     stream: secondProviderRequest.stream,
     temperature: secondProviderRequest.temperature,
@@ -359,7 +351,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
     return response;
   } catch (error) {
     // 记录错误详情
-    console.error('第二个服务商错误：', {
+    console.error('主服务商错误响应：', {
       message: error.message,
       response: error.response?.data,
       status: error.response?.status
@@ -585,7 +577,8 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
     if (moderationPassed) {
       const response = await retryRequest(
         () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
-        config.timeouts.maxRetryTime
+        config.timeouts.maxRetryTime,
+        "sendToSecondProvider-Stream"
       );
 
       // 替换原来的 response.data.pipe(res) 为自定义的流处理
@@ -918,7 +911,8 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
     if (moderationPassed) {
       const response = await retryRequest(
         () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
-        config.timeouts.maxRetryTime
+        config.timeouts.maxRetryTime,
+        "sendToSecondProvider-Normal"
       );
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify(response.data));
