@@ -47,7 +47,8 @@ const config = {
     maxRetryTime: parseInt(process.env.MAX_RETRY_TIME || '90000'),
     retryDelay: parseInt(process.env.RETRY_DELAY || '2000'),
     streamTimeout: parseInt(process.env.STREAM_TIMEOUT || '300000'),
-    maxRetryCount: parseInt(process.env.MAX_RETRY_COUNT || '5')
+    maxRetryCount: parseInt(process.env.MAX_RETRY_COUNT || '5'),
+    enableRetry: process.env.ENABLE_RETRY !== 'false' // 默认为 false，需要重试的话设置为 true
   },
   
   // 速率限制设置

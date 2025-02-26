@@ -79,6 +79,7 @@
 | RETRY_DELAY | 重试延迟(毫秒) | 5000 |
 | STREAM_TIMEOUT | 流式响应超时(毫秒) | 60000 |
 | MAX_RETRY_COUNT | 最大重试次数 | 5 |
+| ENABLE_RETRY | 是否启用重试功能 | true |
 | CHAT_RPM | 聊天补全API的每分钟请求限制 | 60 |
 | IMAGES_RPM | 图像生成API的每分钟请求限制 | 20 |
 | AUDIO_RPM | 音频转录API的每分钟请求限制 | 20 |

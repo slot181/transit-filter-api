@@ -90,6 +90,12 @@ function logModerationResult(model, request, response, result, isViolation) {
 
 // 添加重试函数
 async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
+  // 检查是否启用重试功能
+  if (!config.timeouts.enableRetry) {
+    console.log(`[${fnName}] 重试功能已禁用，直接执行请求`);
+    return await requestFn();
+  }
+
   const startTime = Date.now();
   let retryCount = 0;
   let lastError = null;
