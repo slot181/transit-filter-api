@@ -85,8 +85,30 @@ function handleError(error) {
     };
   }
 
+  // 处理可能是字符串形式的错误响应
+  if (typeof error.response?.data === 'string') {
+    try {
+      // 尝试解析JSON字符串
+      const parsedData = JSON.parse(error.response.data);
+      if (parsedData.error) {
+        return {
+          error: {
+            message: parsedData.error.message || "服务提供商错误",
+            type: parsedData.error.type || ErrorTypes.SERVICE,
+            code: error.response.status || 500,
+            provider_error: parsedData.error
+          }
+        };
+      }
+    } catch (parseError) {
+      // 解析失败，使用原始字符串作为错误消息
+      console.log('无法将错误响应解析为 JSON：', parseError.message);
+    }
+  }
+
   // 提取原始错误信息
   let errorMessage = error.response?.data?.message
+    || (typeof error.response?.data === 'string' ? error.response.data : null)
     || error.originalResponse?.data?.message
     || error.message
     || "服务器内部错误";

@@ -340,15 +340,70 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
   });
 
   try {
-    const response = await axios.post(
-      secondProviderUrl + '/v1/chat/completions',
-      secondProviderRequest,
-      {
-        ...secondProviderConfig,
-        responseType: req.body.stream ? 'stream' : 'json'
+    // 对于流式请求和非流式请求使用不同的处理方式
+    if (req.body.stream) {
+      // 流式请求特殊处理
+      const response = await axios.post(
+        secondProviderUrl + '/v1/chat/completions',
+        secondProviderRequest,
+        {
+          ...secondProviderConfig,
+          responseType: 'stream',
+          // 确保错误也能被正确捕获和处理
+          validateStatus: function (status) {
+            return true; // 不抛出HTTP错误，而是在响应中处理
+          }
+        }
+      );
+      
+      // 检查响应状态码，如果不是200，则手动构建错误
+      if (response.status !== 200) {
+        // 尝试读取错误响应体
+        let errorData = '';
+        await new Promise((resolve) => {
+          response.data.on('data', chunk => {
+            errorData += chunk.toString();
+          });
+          
+          response.data.on('end', () => {
+            resolve();
+          });
+        });
+        
+        // 尝试解析错误数据
+        try {
+          const parsedError = JSON.parse(errorData);
+          const error = new Error(parsedError.error?.message || "流式请求失败");
+          error.response = {
+            status: response.status,
+            data: parsedError,
+            headers: response.headers
+          };
+          throw error;
+        } catch (parseError) {
+          // 如果无法解析JSON，使用原始错误
+          const error = new Error("流式请求失败，无法解析错误响应");
+          error.response = {
+            status: response.status,
+            data: { error: { message: errorData || "未知错误" } },
+            headers: response.headers
+          };
+          throw error;
+        }
       }
-    );
-    return response;
+      
+      return response;
+    } else {
+      // 非流式请求正常处理
+      return await axios.post(
+        secondProviderUrl + '/v1/chat/completions',
+        secondProviderRequest,
+        {
+          ...secondProviderConfig,
+          responseType: 'json'
+        }
+      );
+    }
   } catch (error) {
     // 记录错误详情
     console.error('主服务商错误响应：', {
@@ -575,51 +630,88 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
     // 审核通过后，只重试第二个提供商的请求
     if (moderationPassed) {
-      const response = await retryRequest(
-        () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
-        config.timeouts.maxRetryTime,
-        "sendToSecondProvider-Stream"
-      );
+      try {
+        const response = await retryRequest(
+          () => sendToSecondProvider(req, secondProviderUrl, secondProviderConfig),
+          config.timeouts.maxRetryTime,
+          "sendToSecondProvider-Stream"
+        );
 
-      // 替换原来的 response.data.pipe(res) 为自定义的流处理
-      const stream = response.data;
+        // 检查是否是错误响应
+        if (response.status !== 200) {
+          // 构建错误对象
+          const error = new Error("主服务商返回错误");
+          error.response = {
+            status: response.status,
+            data: response.data,
+            headers: response.headers
+          };
+          throw error;
+        }
 
-      stream.on('data', (chunk) => {
-        lastDataTime = Date.now(); // 更新最后收到数据的时间
-        res.write(chunk);
-      });
+        // 替换原来的 response.data.pipe(res) 为自定义的流处理
+        const stream = response.data;
 
-      stream.on('end', () => {
-        clearInterval(checkInterval);
-        res.end();
-      });
-
-      stream.on('error', (error) => {
-        clearInterval(checkInterval);
-
-        // 记录错误详情
-        console.error('Stream error:', {
-          message: error.message,
-          response: error.response?.data,
-          status: error.response?.status
+        stream.on('data', (chunk) => {
+          lastDataTime = Date.now(); // 更新最后收到数据的时间
+          res.write(chunk);
         });
 
-        // 直接处理并发送错误响应
-        try {
-          const errorResponse = handleError(error);
-          res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
-          res.write('data: [DONE]\n\n');
-        } catch (writeError) {
-          console.error('Error writing stream error response:', writeError);
-        }
+        stream.on('end', () => {
+          clearInterval(checkInterval);
+          res.end();
+        });
+
+        stream.on('error', (error) => {
+          clearInterval(checkInterval);
+
+          // 记录错误详情
+          console.error('Stream error:', {
+            message: error.message,
+            response: error.response?.data,
+            status: error.response?.status
+          });
+
+          // 构建符合OpenAI格式的错误响应
+          const errorResponse = {
+            error: {
+              message: error.message || "流式传输错误",
+              type: ErrorTypes.SERVICE,
+              code: ErrorCodes.INTERNAL_ERROR
+            }
+          };
+          
+          // 直接处理并发送错误响应
+          try {
+            res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+            res.write('data: [DONE]\n\n');
+          } catch (writeError) {
+            console.error('Error writing stream error response:', writeError);
+          }
+          res.end();
+        });
+      } catch (error) {
+        clearInterval(checkInterval);
+        console.error('Stream request error:', error);
+        
+        // 使用handleError处理错误，确保返回符合OpenAI格式的错误
+        const errorResponse = handleError(error);
+        
+        // 以流式格式发送错误
+        res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+        res.write('data: [DONE]\n\n');
         res.end();
-      });
+      }
     }
   } catch (error) {
     clearInterval(checkInterval);
-    console.error('Stream handler error:', error.message);
+    console.error('Stream handler error:', error.message, error.stack);
+    
+    // 确保错误对象包含完整的信息
     const errorResponse = handleError(error);
+    
     try {
+      // 确保错误消息以流式格式返回
       res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
       res.write('data: [DONE]\n\n');
     } catch (writeError) {
