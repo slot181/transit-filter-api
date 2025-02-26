@@ -119,10 +119,6 @@ async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
   const startTime = Date.now();
   let retryCount = 0;
   let lastError = null;
-  
-  // 添加安全参数
-  const absoluteMaxRetries = 10; // 无论设置如何，最多尝试10次
-  const minRetryDelay = 1000; // 最小重试延迟1秒
 
   const tryRequest = async () => {
     try {
@@ -141,16 +137,6 @@ async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
         throw error;
       }
 
-      // 特别处理模型不存在的错误
-      if (error.response && 
-          error.response.data && 
-          (error.response.data.error?.message?.includes('model') ||
-           error.response.data.error?.code === 'model_not_found')) {
-        console.log(`[${fnName}] 检测到模型错误，停止重试`);
-        error.nonRetryable = true;
-        throw error;
-      }
-
       throw error;
     }
   };
@@ -161,13 +147,7 @@ async function retryRequest(requestFn, maxTime, fnName = "未知函数") {
     } catch (error) {
       const elapsedTime = Date.now() - startTime;
       
-      // 添加绝对最大重试次数检查
-      if (retryCount >= absoluteMaxRetries) {
-        console.log(`[${fnName}] 已达到绝对最大重试次数 (${absoluteMaxRetries})`);
-        throw error;
-      }
-      
-      const nextRetryTime = elapsedTime + Math.max(config.timeouts.retryDelay, minRetryDelay);
+      const nextRetryTime = elapsedTime + config.timeouts.retryDelay;
 
       if (nextRetryTime >= maxTime || retryCount >= config.timeouts.maxRetryCount) {
         const retryType = nextRetryTime >= maxTime ? 'time limit' : 'count limit';
@@ -442,12 +422,6 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
             headers: response.headers
           };
           
-          // 检查是否是模型不存在错误
-          if (parsedError.error?.message?.includes('model') || 
-              parsedError.error?.code === 'model_not_found') {
-            error.nonRetryable = true;
-          }
-          
           // 记录服务失败
           recordServiceFailure('secondProvider');
           
@@ -496,15 +470,6 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
       error.nonRetryable = true;
     }
     
-    // 检查是否是模型不存在错误
-    if (error.response && 
-        error.response.data && 
-        (error.response.data.error?.message?.includes('model') ||
-         error.response.data.error?.code === 'model_not_found')) {
-      console.log(`检测到模型错误，标记为不可重试`);
-      error.nonRetryable = true;
-    }
-
     // 增强错误对象，确保保留完整的错误信息
     if (error.response) {
       // 确保错误对象包含完整的响应数据
@@ -654,21 +619,6 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
         throw error;
       }
       
-      // 如果错误是模型相关错误，将其标记为不可重试
-      if (error.response && 
-          (error.response.status === 404 || 
-           (error.response.data && 
-            (error.response.data.error?.message?.includes('model') || 
-             error.response.data.error?.code === 'model_not_found')))) {
-        
-        console.error(`审核模型错误: ${error.response?.data?.error?.message || error.message}`);
-        
-        const modelError = new Error("审核模型不可用或不存在");
-        modelError.nonRetryable = true;
-        modelError.response = error.response;
-        throw modelError;
-      }
-
       console.error(`内容审核系统异常：模型 "${selectedModel}" 审核过程中遇到错误，请检查审核服务状态`, error);
       // 其他API错误
       throw error;

@@ -20,7 +20,6 @@ const ErrorCodes = {
   INTERNAL_ERROR: 'internal_error',            // 内部错误
   INVALID_TEMPERATURE: 'invalid_temperature',  // 无效的temperature参数
   RATE_LIMIT_EXCEEDED: 'rate_limit_exceeded',  // 超过速率限制
-  MODEL_NOT_FOUND: 'model_not_found'           // 模型不存在
 };
 
 // 全局请求计数器，用于检测异常请求模式
