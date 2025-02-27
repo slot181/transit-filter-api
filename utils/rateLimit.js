@@ -80,10 +80,15 @@ class RateLimiter {
         this.ipRequestCounts[ipKey][pathKey]++;
         this.ipRequestCounts[globalIpKey]++;
 
-        // 获取该路径的RPM限制
-        const pathLimit = this.limits[pathKey] || 60; // 特定路径总计数器限制
-        const ipPathLimit = Math.floor(pathLimit * 0.25); // 特定路径IP路径限制
-        const globalIpLimit = this.globalIpLimit; // 全局IP路径限制
+        // 该路径的全局请求限制，若未设置则默认限制为 60 次(RPM)
+        const pathLimit = this.limits[pathKey] || 60;
+
+        // 单个 IP 在该路径的请求限制，为全局路径限制的 25%(RPM)
+        const ipPathLimit = Math.floor(pathLimit * 0.25);
+
+        // 单个 IP 在所有路径上的全局请求限制(RPM)
+        const globalIpLimit = this.globalIpLimit;
+
 
         // 检查是否超过任一限制
         const isPathLimited = this.requestCounts[pathKey] > pathLimit;
@@ -92,8 +97,8 @@ class RateLimiter {
 
         // 记录异常请求模式
         if (isPathLimited || isIpPathLimited || isGlobalIpLimited) {
-            console.warn(`[速率限制] 请求来自 IP: ${ip}，请求路径: ${path}。当前计数：该路径的总请求数 ${this.requestCounts[pathKey]}/${pathLimit}，该 IP 在该路径的请求数 ${this.ipRequestCounts[ipKey][pathKey]}/${ipPathLimit}，该 IP 的所有请求总数 ${this.ipRequestCounts[globalIpKey]}/${globalIpLimit}`);
-        }        
+            console.warn(`[速率限制] 请求来自 IP: ${ip}，请求路径: ${path}。当前计数：该路径的总请求数(RPM) ${this.requestCounts[pathKey]}/${pathLimit}，该 IP 在该路径的请求数(RPM) ${this.ipRequestCounts[ipKey][pathKey]}/${ipPathLimit}，该 IP 的所有请求总数(RPM) ${this.ipRequestCounts[globalIpKey]}/${globalIpLimit}`);
+        }
 
         return isPathLimited || isIpPathLimited || isGlobalIpLimited;
     }
@@ -154,7 +159,7 @@ class RateLimiter {
      */
     resetCounters() {
         const now = Date.now();
-        
+
         // 重置路径计数器
         for (const path in this.requestCounts) {
             if (now - this.windowStartTimes[path] > 60000) {
@@ -162,7 +167,7 @@ class RateLimiter {
                 this.windowStartTimes[path] = now;
             }
         }
-        
+
         // 重置IP计数器
         for (const ip in this.ipRequestCounts) {
             if (ip.startsWith('global:')) {
@@ -181,21 +186,21 @@ class RateLimiter {
                 }
             }
         }
-        
+
         // 清理超过5分钟未活动的IP记录，防止内存泄漏
         this.cleanupInactiveIps(now);
     }
-    
+
     /**
      * 清理不活跃的IP记录
      * @param {number} now - 当前时间戳
      */
     cleanupInactiveIps(now) {
         const inactiveThreshold = 300000; // 5分钟
-        
+
         for (const ip in this.ipRequestCounts) {
             let isActive = false;
-            
+
             if (ip.startsWith('global:')) {
                 // 检查全局IP是否活跃
                 if (now - this.ipWindowStartTimes[ip] < inactiveThreshold) {
@@ -210,7 +215,7 @@ class RateLimiter {
                     }
                 }
             }
-            
+
             // 如果IP不活跃，删除相关记录
             if (!isActive) {
                 delete this.ipRequestCounts[ip];
