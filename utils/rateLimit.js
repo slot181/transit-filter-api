@@ -81,9 +81,9 @@ class RateLimiter {
         this.ipRequestCounts[globalIpKey]++;
 
         // 获取该路径的RPM限制
-        const pathLimit = this.limits[pathKey] || 60; // 默认为每分钟60个请求
-        const ipPathLimit = Math.max(Math.floor(pathLimit * 1.5), pathLimit); // IP+路径限制稍高于全局路径限制
-        const globalIpLimit = this.globalIpLimit; // 全局IP限制
+        const pathLimit = this.limits[pathKey] || 60; // 默认全局特定路径RPM限制
+        const ipPathLimit = Math.floor(pathLimit * 0.25); // IP特定路径RPM限制为全局特地路径RPM限制的25%
+        const globalIpLimit = this.globalIpLimit; // 全局IP路径RPM限制
 
         // 检查是否超过任一限制
         const isPathLimited = this.requestCounts[pathKey] > pathLimit;
@@ -92,7 +92,7 @@ class RateLimiter {
 
         // 记录异常请求模式
         if (isPathLimited || isIpPathLimited || isGlobalIpLimited) {
-            console.warn(`[速率限制] IP: ${ip}, 路径: ${path}, 路径计数: ${this.requestCounts[pathKey]}/${pathLimit}, IP路径计数: ${this.ipRequestCounts[ipKey][pathKey]}/${ipPathLimit}, 全局IP计数: ${this.ipRequestCounts[globalIpKey]}/${globalIpLimit}`);
+            console.warn(`[速率限制] IP: ${ip}, 请求路径: ${path}, 全局路径计数: ${this.requestCounts[pathKey]}/${pathLimit}, IP路径计数: ${this.ipRequestCounts[ipKey][pathKey]}/${ipPathLimit}, 全局IP路径计数: ${this.ipRequestCounts[globalIpKey]}/${globalIpLimit}`);
         }
 
         return isPathLimited || isIpPathLimited || isGlobalIpLimited;
