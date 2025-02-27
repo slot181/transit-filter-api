@@ -1,33 +1,12 @@
-# 内容审核API
+# transit-filter-api
 
-这是一个支持内容审核和API转发功能的服务，兼容OpenAI API格式。
-
-## 功能特点
-
-- 聊天补全API
-- 图像生成API
-- 音频转录API
-- 模型列表API
-- 内容审核功能
+这是一项兼容OpenAI官方API接口的服务，提供内容审核和API转发功能。
 
 ## Docker部署
 
 ### 服务器配置
 
-在部署前，请确保服务器已开放相应端口：
-
-1. 对于Ubuntu/Debian系统：
-   ```bash
-   sudo ufw allow 3000/tcp
-   ```
-
-2. 对于CentOS/RHEL系统：
-   ```bash
-   sudo firewall-cmd --permanent --add-port=3000/tcp
-   sudo firewall-cmd --reload
-   ```
-
-3. 对于云服务器，请在控制台安全组中开放3000端口
+在部署前，请确保服务器已开放相应端口。
 
 ### 使用Docker Compose（推荐）
 
@@ -84,6 +63,7 @@
 | IMAGES_RPM | 图像生成API的每分钟请求限制 | 20 |
 | AUDIO_RPM | 音频转录API的每分钟请求限制 | 20 |
 | MODELS_RPM | 模型列表API的每分钟请求限制 | 100 |
+| GLOBAL_IP_RPM | 全局IP的每分钟请求限制 | 300 |
 | PORT | 服务器端口 | 3000 |
 
 ## API使用
@@ -102,30 +82,12 @@ Authorization: Bearer YOUR_AUTH_KEY
 
 ## Vercel 部署
 
-1. 安装 Vercel CLI
-   ```bash
-   npm install -g vercel
-   ```
+1. fork本项目
 
 2. 登录 Vercel
-   ```bash
-   vercel login
-   ```
 
-3. 部署到 Vercel
-   ```bash
-   vercel
-   ```
+3. 选择 GitHub 仓库
 
 4. 设置环境变量
-   在 Vercel 控制台中，为你的项目设置以下环境变量：
-   - AUTH_KEY
-   - FIRST_PROVIDER_URL
-   - FIRST_PROVIDER_KEY
-   - FIRST_PROVIDER_MODELS
-   - SECOND_PROVIDER_URL
-   - SECOND_PROVIDER_KEY
-   - CHAT_RPM
-   - IMAGES_RPM
-   - AUDIO_RPM
-   - MODELS_RPM
+
+5. 部署
