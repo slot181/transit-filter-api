@@ -4,25 +4,6 @@ const axios = require('axios');
 const { config, ErrorTypes, ErrorCodes, handleError, checkCircuitBreaker, recordServiceFailure, globalRequestCounter } = require('./config.js');
 const rateLimitMiddleware = require('../utils/rateLimitMiddleware');
 
-// 用于审核服务错误监控的函数
-function logModerationServiceError(error, modelName = 'unknown') {
-  const timestamp = new Date().toISOString();
-  const errorId = `moderr_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-  
-  console.error(`[${errorId}][${timestamp}] 审核服务错误:`);
-  console.error(`- 模型: ${modelName}`);
-  console.error(`- 错误消息: ${error.message || 'No message'}`);
-  console.error(`- 错误类型: ${error.error?.type || 'Unknown type'}`);
-  console.error(`- 状态码: ${error.response?.status || 'No status'}`);
-  console.error(`- 熔断状态: ${config.serviceHealth.firstProvider.circuitBreakerTripped ? '已触发' : '未触发'}`);
-  
-  if (config.serviceHealth.firstProvider.circuitBreakerTripped) {
-    console.error(`- 熔断重置时间: ${new Date(config.serviceHealth.firstProvider.circuitBreakerResetTime).toISOString()}`);
-  }
-  
-  return errorId;
-}
-
 // 用于负载均衡的模型索引计数器
 let moderationModelIndex = 0;
 
@@ -521,9 +502,9 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
     };
   }
 
-  // 记录状态信息（用于调试）
-  const health = config.serviceHealth['firstProvider'];
-  console.log(`[审核服务] 熔断器状态: circuitBreakerTripped=${health.circuitBreakerTripped}, failureCount=${health.failureCount}/${config.serviceHealthConfig.maxErrors}`);
+  // 移除直接访问firstProvider熔断状态的日志，改为检查主服务熔断状态
+  const mainServiceHealth = config.serviceHealth['secondProvider'];
+  console.log(`[审核服务] 主服务熔断器状态: circuitBreakerTripped=${mainServiceHealth.circuitBreakerTripped}, failureCount=${mainServiceHealth.failureCount}/${config.serviceHealthConfig.maxErrors}`);
 
   try {
     // 选择一个审核模型
@@ -641,26 +622,9 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
       console.error(`[审核服务] 请求失败，记录到熔断器统计`);
       recordServiceFailure('firstProvider');
       
-      // 使用新增的错误日志函数记录详细信息
-      const errorId = logModerationServiceError(error, selectedModel);
-      
       // 如果错误已经是我们格式化过的违规错误，直接抛出
       if (error.error?.code === ErrorCodes.CONTENT_VIOLATION) {
         throw error;
-      }
-      
-      // 检查熔断器状态（可能刚刚触发）
-      if (!checkCircuitBreaker('firstProvider')) {
-        console.error(`[${errorId}] 熔断器已触发，返回熔断器错误响应`);
-        throw {
-          error: {
-            message: "内容审核服务暂时不可用，请稍后再试（熔断器已触发）",
-            type: ErrorTypes.SERVICE,
-            code: ErrorCodes.SERVICE_UNAVAILABLE,
-            circuit_breaker: true,
-            error_id: errorId
-          }
-        };
       }
       
       // 其他API错误

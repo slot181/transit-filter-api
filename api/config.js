@@ -121,12 +121,8 @@ const config = {
   // 服务健康状态监控
   serviceHealth: {
     firstProvider: {
-      isHealthy: true,
-      failureCount: 0,
-      lastFailureTime: 0,
-      lastCheckTime: 0,
-      circuitBreakerTripped: false,
-      circuitBreakerResetTime: 0
+      // 只保留必要的字段，移除熔断相关的配置
+      isHealthy: true
     },
     secondProvider: {
       isHealthy: true,
@@ -215,24 +211,21 @@ function handleError(error) {
 
 // 检查熔断器状态
 function checkCircuitBreaker(provider) {
-  const health = config.serviceHealth[provider];
-  
-  // 如果是审核服务提供商，同时检查主服务提供商的熔断状态
+  // 如果是审核服务提供商，只检查主服务提供商的熔断状态
   if (provider === 'firstProvider') {
     const secondProviderHealth = config.serviceHealth['secondProvider'];
     
     // 如果主服务商已熔断，审核服务商也应该熔断
     if (secondProviderHealth.circuitBreakerTripped) {
-      // 将审核服务商的熔断状态与主服务商同步
-      health.circuitBreakerTripped = true;
-      health.circuitBreakerResetTime = secondProviderHealth.circuitBreakerResetTime;
-      
-      console.log(`[熔断器] 审核服务熔断器跟随主服务熔断状态，重置时间：${new Date(health.circuitBreakerResetTime).toISOString()}`);
+      console.log(`[熔断器] 审核服务依据主服务熔断状态，当前主服务已熔断，重置时间：${new Date(secondProviderHealth.circuitBreakerResetTime).toISOString()}`);
       return false;
     }
+    // 审核服务商自己没有熔断机制，总是返回正常
+    return true;
   }
   
-  // 检查该提供商自身的熔断状态
+  // 以下仅针对主服务商的熔断状态检查
+  const health = config.serviceHealth[provider];
   if (health.circuitBreakerTripped) {
     if (Date.now() > health.circuitBreakerResetTime) {
       console.log(`[熔断器] ${provider} 服务熔断器重置`);
@@ -248,6 +241,12 @@ function checkCircuitBreaker(provider) {
 
 // 记录服务失败
 function recordServiceFailure(provider) {
+  // 如果是审核服务商，不记录失败统计，因为审核服务不应自行触发熔断
+  if (provider === 'firstProvider') {
+    console.log(`[熔断器] 审核服务失败，但不启用独立熔断机制`);
+    return;
+  }
+  
   const health = config.serviceHealth[provider];
   const now = Date.now();
   
@@ -266,7 +265,7 @@ function recordServiceFailure(provider) {
   
   // 如果在错误窗口时间内失败次数超过最大错误数，触发熔断器
   if (health.failureCount > config.serviceHealthConfig.maxErrors) {
-    console.error(`[熔断器警报] ${provider} 服务在${errorWindow/1000}秒内失败次数达到${health.failureCount}次，已超过阈值${config.serviceHealthConfig.maxErrors}，触发熔断器！`);
+    console.error(`[熔断器警报] ${provider} 主服务在${errorWindow/1000}秒内失败次数达到${health.failureCount}次，已超过阈值${config.serviceHealthConfig.maxErrors}，触发熔断器！`);
     health.circuitBreakerTripped = true;
     // 熔断器保持60秒
     health.circuitBreakerResetTime = now + 60000;
