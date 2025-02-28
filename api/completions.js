@@ -457,19 +457,20 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
   } catch (error) {
     // 记录服务失败
     recordServiceFailure('secondProvider');
-    
+  
     // 记录错误详情
     console.error('主服务商错误响应：', {
       message: error.message,
       response: error.response?.data,
-      status: error.response?.status
+      status: error.response?.status,
+      details: `错误累积: ${config.serviceHealth.secondProvider.failureCount}/${config.serviceHealthConfig.maxErrors} 在 ${config.serviceHealthConfig.errorWindow/1000}秒内`
     });
 
     // 默认将所有错误标记为不可重试，除非明确启用了重试功能
     if (config.timeouts.enableRetry !== true) {
       error.nonRetryable = true;
     }
-    
+  
     // 增强错误对象，确保保留完整的错误信息
     if (error.response) {
       // 确保错误对象包含完整的响应数据
@@ -619,7 +620,7 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
         throw error;
       }
       
-      console.error(`内容审核系统异常：模型 "${selectedModel}" 审核过程中遇到错误，请检查审核服务状态`, error);
+      console.error(`内容审核系统异常：模型 "${selectedModel}" 审核过程中遇到错误，错误累积: ${config.serviceHealth.firstProvider.failureCount}/${config.serviceHealthConfig.maxErrors} 在 ${config.serviceHealthConfig.errorWindow/1000}秒内`, error);
       // 其他API错误
       throw error;
     }
@@ -697,6 +698,14 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
         }
       } catch (moderationError) {
         if (moderationError.error?.code === "content_violation") {
+          res.write(`data: ${JSON.stringify(moderationError)}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+        // 检查是否是熔断器触发的错误
+        if (moderationError.error?.circuit_breaker) {
+          console.error(`[熔断器警报] 内容审核服务熔断器已触发，临时停止请求`);
           res.write(`data: ${JSON.stringify(moderationError)}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
@@ -1092,6 +1101,14 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
       } catch (moderationError) {
         if (moderationError.error?.code === "content_violation") {
           res.statusCode = 403;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(moderationError));
+          return;
+        }
+        // 检查是否是熔断器触发的错误
+        if (moderationError.error?.circuit_breaker) {
+          console.error(`[熔断器警报] 内容审核服务熔断器已触发，临时停止请求`);
+          res.statusCode = 503;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(moderationError));
           return;

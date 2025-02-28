@@ -112,12 +112,19 @@ const config = {
     models: parseInt(process.env.MODELS_RPM || '100')
   },
   
+  // 服务商熔断配置
+  serviceHealthConfig: {
+    maxErrors: parseInt(process.env.MAX_PROVIDER_ERRORS || '100'),
+    errorWindow: parseInt(process.env.PROVIDER_ERROR_WINDOW || '60000'),
+  },
+  
   // 服务健康状态监控
   serviceHealth: {
     firstProvider: {
       isHealthy: true,
       failureCount: 0,
       lastFailureTime: 0,
+      lastCheckTime: 0,
       circuitBreakerTripped: false,
       circuitBreakerResetTime: 0
     },
@@ -125,6 +132,7 @@ const config = {
       isHealthy: true,
       failureCount: 0,
       lastFailureTime: 0,
+      lastCheckTime: 0,
       circuitBreakerTripped: false,
       circuitBreakerResetTime: 0
     }
@@ -232,9 +240,18 @@ function recordServiceFailure(provider) {
   health.failureCount++;
   health.lastFailureTime = now;
   
-  // 如果10秒内失败次数超过100次，触发熔断器
-  if (health.failureCount > 100) {
-    console.error(`[熔断器] ${provider} 服务在短时间内失败次数过多，触发熔断器`);
+  // 清除过期的错误计数（超出时间窗口的）
+  const errorWindow = config.serviceHealthConfig.errorWindow;
+  if (health.lastCheckTime && now - health.lastCheckTime > errorWindow) {
+    console.log(`[熔断器] ${provider} 重置错误计数器，因为已超过错误窗口时间`);
+    health.failureCount = 1; // 重置为1，因为当前这次错误
+  }
+  
+  health.lastCheckTime = now;
+  
+  // 如果在错误窗口时间内失败次数超过最大错误数，触发熔断器
+  if (health.failureCount > config.serviceHealthConfig.maxErrors) {
+    console.error(`[熔断器警报] ${provider} 服务在${errorWindow/1000}秒内失败次数达到${health.failureCount}次，已超过阈值${config.serviceHealthConfig.maxErrors}，触发熔断器！`);
     health.circuitBreakerTripped = true;
     // 熔断器保持60秒
     health.circuitBreakerResetTime = now + 60000;
