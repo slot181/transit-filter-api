@@ -26,7 +26,7 @@ const ErrorCodes = {
 const globalRequestCounter = {
   count: 0,
   startTime: Date.now(),
-  threshold: 1000, // 1秒内超过1000个请求视为异常
+  threshold: 500, // 1秒内超过500个请求视为异常
   isCircuitBreakerTripped: false,
   circuitBreakerResetTime: 0,
   
@@ -254,6 +254,12 @@ function recordServiceFailure(provider) {
   const health = config.serviceHealth[provider];
   const now = Date.now();
   
+  // 添加此段：检查是否超过错误窗口时间，如果超过则重置计数
+  if (health.lastFailureTime > 0 && now - health.lastFailureTime > config.serviceHealthConfig.errorWindow) {
+    console.log(`[熔断器] ${provider} 服务错误窗口期已过(${config.serviceHealthConfig.errorWindow/1000}秒)，重置错误计数`);
+    health.failureCount = 0;
+  }
+  
   // 增加失败计数
   health.failureCount++;
   health.lastFailureTime = now;
@@ -278,6 +284,14 @@ const circuitBreakerCheckInterval = setInterval(() => {
   if (mainServiceHealth.circuitBreakerTripped && now > mainServiceHealth.circuitBreakerResetTime) {
     console.log(`[定时器] 主服务熔断器已到期，自动重置，当前时间：${new Date().toISOString()}`);
     mainServiceHealth.circuitBreakerTripped = false;
+    mainServiceHealth.failureCount = 0;
+  }
+  
+  // 添加此段：检查错误计数时间窗口
+  if (!mainServiceHealth.circuitBreakerTripped && 
+      mainServiceHealth.lastFailureTime > 0 && 
+      now - mainServiceHealth.lastFailureTime > config.serviceHealthConfig.errorWindow) {
+    console.log(`[定时器] 主服务错误计数窗口(${config.serviceHealthConfig.errorWindow/1000}秒)已过期，自动重置，当前时间：${new Date().toISOString()}`);
     mainServiceHealth.failureCount = 0;
   }
 }, 10000); // 每10秒检查一次
