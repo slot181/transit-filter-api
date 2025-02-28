@@ -121,7 +121,7 @@ const config = {
   // 服务健康状态监控
   serviceHealth: {
     firstProvider: {
-      // 只保留必要的字段，移除熔断相关的配置
+      // 完全简化，不需要任何熔断相关字段
       isHealthy: true
     },
     secondProvider: {
@@ -213,65 +213,79 @@ function handleError(error) {
 function checkCircuitBreaker(provider) {
   // 如果是审核服务提供商，只检查主服务提供商的熔断状态
   if (provider === 'firstProvider') {
-    const secondProviderHealth = config.serviceHealth['secondProvider'];
+    const mainServiceHealth = config.serviceHealth['secondProvider'];
+    // 检查主服务熔断器是否已到期
+    if (mainServiceHealth.circuitBreakerTripped && Date.now() > mainServiceHealth.circuitBreakerResetTime) {
+      console.log(`[熔断器] 主服务熔断器已到期，重置熔断状态，时间：${new Date().toISOString()}`);
+      mainServiceHealth.circuitBreakerTripped = false;
+      mainServiceHealth.failureCount = 0;
+    }
     
-    // 如果主服务商已熔断，审核服务商也应该熔断
-    if (secondProviderHealth.circuitBreakerTripped) {
-      console.log(`[熔断器] 审核服务依据主服务熔断状态，当前主服务已熔断，重置时间：${new Date(secondProviderHealth.circuitBreakerResetTime).toISOString()}`);
+    // 如果主服务熔断，审核服务也熔断
+    if (mainServiceHealth.circuitBreakerTripped) {
+      console.log(`[熔断器] 审核服务跟随主服务熔断状态，当前主服务已熔断`);
       return false;
     }
-    // 审核服务商自己没有熔断机制，总是返回正常
     return true;
   }
   
-  // 以下仅针对主服务商的熔断状态检查
+  // 以下处理主服务熔断状态
   const health = config.serviceHealth[provider];
-  if (health.circuitBreakerTripped) {
-    if (Date.now() > health.circuitBreakerResetTime) {
-      console.log(`[熔断器] ${provider} 服务熔断器重置`);
-      health.circuitBreakerTripped = false;
-      health.failureCount = 0;
-      return true;
-    }
-    return false;
+  
+  // 检查熔断器是否已到期
+  if (health.circuitBreakerTripped && Date.now() > health.circuitBreakerResetTime) {
+    console.log(`[熔断器] ${provider} 服务熔断器已到期，重置熔断状态，时间：${new Date().toISOString()}`);
+    health.circuitBreakerTripped = false;
+    health.failureCount = 0;
+    return true;
   }
   
-  return true;
+  return !health.circuitBreakerTripped;
 }
 
 // 记录服务失败
 function recordServiceFailure(provider) {
-  // 如果是审核服务商，不记录失败统计，因为审核服务不应自行触发熔断
+  // 如果是审核服务商，直接返回不做处理
   if (provider === 'firstProvider') {
-    console.log(`[熔断器] 审核服务失败，但不启用独立熔断机制`);
     return;
   }
   
+  // 只处理主服务商的失败记录
   const health = config.serviceHealth[provider];
   const now = Date.now();
   
   // 增加失败计数
   health.failureCount++;
   health.lastFailureTime = now;
-  
-  // 清除过期的错误计数（超出时间窗口的）
-  const errorWindow = config.serviceHealthConfig.errorWindow;
-  if (health.lastCheckTime && now - health.lastCheckTime > errorWindow) {
-    console.log(`[熔断器] ${provider} 重置错误计数器，因为已超过错误窗口时间`);
-    health.failureCount = 1; // 重置为1，因为当前这次错误
-  }
-  
   health.lastCheckTime = now;
   
-  // 如果在错误窗口时间内失败次数超过最大错误数，触发熔断器
+  // 触发熔断器的条件判断
   if (health.failureCount > config.serviceHealthConfig.maxErrors) {
-    console.error(`[熔断器警报] ${provider} 主服务在${errorWindow/1000}秒内失败次数达到${health.failureCount}次，已超过阈值${config.serviceHealthConfig.maxErrors}，触发熔断器！`);
+    console.error(`[熔断器警报] ${provider} 主服务在 ${config.serviceHealthConfig.errorWindow/1000} 秒内失败 ${health.failureCount} 次，已超过阈值 ${config.serviceHealthConfig.maxErrors}，触发熔断`);
     health.circuitBreakerTripped = true;
-    // 熔断器保持60秒
-    health.circuitBreakerResetTime = now + 60000;
+    health.circuitBreakerResetTime = now + 60000; // 熔断60秒
     health.failureCount = 0;
+    console.log(`[熔断器] 主服务已熔断，将在 ${new Date(health.circuitBreakerResetTime).toISOString()} 恢复`);
   }
 }
+
+// 定时检查熔断器状态，自动重置过期的熔断器
+const circuitBreakerCheckInterval = setInterval(() => {
+  const now = Date.now();
+  
+  // 只检查主服务熔断器状态
+  const mainServiceHealth = config.serviceHealth['secondProvider'];
+  if (mainServiceHealth.circuitBreakerTripped && now > mainServiceHealth.circuitBreakerResetTime) {
+    console.log(`[定时器] 主服务熔断器已到期，自动重置，当前时间：${new Date().toISOString()}`);
+    mainServiceHealth.circuitBreakerTripped = false;
+    mainServiceHealth.failureCount = 0;
+  }
+}, 10000); // 每10秒检查一次
+
+// 处理进程退出时清理定时器
+process.on('exit', () => {
+  clearInterval(circuitBreakerCheckInterval);
+});
 
 module.exports = {
   config,

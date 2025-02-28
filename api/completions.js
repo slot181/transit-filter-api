@@ -491,7 +491,7 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
 async function performModeration(messages, firstProviderUrl, firstProviderConfig) {
   // 使用checkCircuitBreaker函数检查熔断器状态，而不是直接访问config
   if (!checkCircuitBreaker('firstProvider')) {
-    console.error(`[熔断器警报] 审核服务熔断器已触发，拒绝处理请求`);
+    console.error(`[熔断器警报] 主服务熔断器已触发，拒绝处理请求`);
     throw {
       error: {
         message: "内容审核服务暂时不可用，请稍后再试",
