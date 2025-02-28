@@ -217,7 +217,22 @@ function handleError(error) {
 function checkCircuitBreaker(provider) {
   const health = config.serviceHealth[provider];
   
-  // 如果熔断器已触发，检查是否可以重置
+  // 如果是审核服务提供商，同时检查主服务提供商的熔断状态
+  if (provider === 'firstProvider') {
+    const secondProviderHealth = config.serviceHealth['secondProvider'];
+    
+    // 如果主服务商已熔断，审核服务商也应该熔断
+    if (secondProviderHealth.circuitBreakerTripped) {
+      // 将审核服务商的熔断状态与主服务商同步
+      health.circuitBreakerTripped = true;
+      health.circuitBreakerResetTime = secondProviderHealth.circuitBreakerResetTime;
+      
+      console.log(`[熔断器] 审核服务熔断器跟随主服务熔断状态，重置时间：${new Date(health.circuitBreakerResetTime).toISOString()}`);
+      return false;
+    }
+  }
+  
+  // 检查该提供商自身的熔断状态
   if (health.circuitBreakerTripped) {
     if (Date.now() > health.circuitBreakerResetTime) {
       console.log(`[熔断器] ${provider} 服务熔断器重置`);
