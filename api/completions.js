@@ -4,6 +4,25 @@ const axios = require('axios');
 const { config, ErrorTypes, ErrorCodes, handleError, checkCircuitBreaker, recordServiceFailure, globalRequestCounter } = require('./config.js');
 const rateLimitMiddleware = require('../utils/rateLimitMiddleware');
 
+// 用于审核服务错误监控的函数
+function logModerationServiceError(error, modelName = 'unknown') {
+  const timestamp = new Date().toISOString();
+  const errorId = `moderr_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+  
+  console.error(`[${errorId}][${timestamp}] 审核服务错误:`);
+  console.error(`- 模型: ${modelName}`);
+  console.error(`- 错误消息: ${error.message || 'No message'}`);
+  console.error(`- 错误类型: ${error.error?.type || 'Unknown type'}`);
+  console.error(`- 状态码: ${error.response?.status || 'No status'}`);
+  console.error(`- 熔断状态: ${config.serviceHealth.firstProvider.circuitBreakerTripped ? '已触发' : '未触发'}`);
+  
+  if (config.serviceHealth.firstProvider.circuitBreakerTripped) {
+    console.error(`- 熔断重置时间: ${new Date(config.serviceHealth.firstProvider.circuitBreakerResetTime).toISOString()}`);
+  }
+  
+  return errorId;
+}
+
 // 用于负载均衡的模型索引计数器
 let moderationModelIndex = 0;
 
@@ -487,17 +506,30 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
   }
 }
 
+// 处理审核服务
 async function performModeration(messages, firstProviderUrl, firstProviderConfig) {
-  // 检查熔断器状态
-  if (!checkCircuitBreaker('firstProvider')) {
-    throw {
-      error: {
-        message: "内容审核服务暂时不可用，请稍后再试",
-        type: ErrorTypes.SERVICE,
-        code: ErrorCodes.SERVICE_UNAVAILABLE,
-        circuit_breaker: true
-      }
-    };
+  // 每次调用前都检查熔断器状态
+  const health = config.serviceHealth['firstProvider'];
+  console.log(`[审核服务] 检查熔断器状态: circuitBreakerTripped=${health.circuitBreakerTripped}, failureCount=${health.failureCount}/${config.serviceHealthConfig.maxErrors}`);
+  
+  if (health.circuitBreakerTripped) {
+    // 熔断器已触发，检查是否可以重置
+    if (Date.now() > health.circuitBreakerResetTime) {
+      console.log(`[熔断器] 审核服务熔断器重置时间已到，重新启用服务`);
+      health.circuitBreakerTripped = false;
+      health.failureCount = 0;
+    } else {
+      // 熔断器仍处于触发状态，拒绝请求
+      console.error(`[熔断器警报] 审核服务仍处于熔断状态，将在 ${new Date(health.circuitBreakerResetTime).toISOString()} 重置，拒绝处理请求`);
+      throw {
+        error: {
+          message: "内容审核服务暂时不可用，请稍后再试",
+          type: ErrorTypes.SERVICE,
+          code: ErrorCodes.SERVICE_UNAVAILABLE,
+          circuit_breaker: true
+        }
+      };
+    }
   }
 
   try {
@@ -612,15 +644,36 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
         isPartialCheck: extractResult.isExtracted
       };
     } catch (error) {
-      // 记录服务失败
+      // 确保先记录服务失败，无论是什么类型的错误
+      console.error(`[审核服务] 请求失败，记录到熔断器统计`);
       recordServiceFailure('firstProvider');
+      
+      // 使用新增的错误日志函数记录详细信息
+      const errorId = logModerationServiceError(error, selectedModel);
+      
+      // 重新检查熔断器状态（可能刚刚触发）
+      const health = config.serviceHealth['firstProvider'];
+      console.error(`[${errorId}] 熔断器状态更新: circuitBreakerTripped=${health.circuitBreakerTripped}, failureCount=${health.failureCount}/${config.serviceHealthConfig.maxErrors}`);
       
       // 如果错误已经是我们格式化过的违规错误，直接抛出
       if (error.error?.code === ErrorCodes.CONTENT_VIOLATION) {
         throw error;
       }
       
-      console.error(`内容审核系统异常：模型 "${selectedModel}" 审核过程中遇到错误，错误累积: ${config.serviceHealth.firstProvider.failureCount}/${config.serviceHealthConfig.maxErrors} 在 ${config.serviceHealthConfig.errorWindow/1000}秒内`, error);
+      // 如果熔断器刚刚被触发，使用熔断器错误
+      if (health.circuitBreakerTripped) {
+        console.error(`[${errorId}] 熔断器已触发，返回熔断器错误响应`);
+        throw {
+          error: {
+            message: "内容审核服务暂时不可用，请稍后再试（熔断器已触发）",
+            type: ErrorTypes.SERVICE,
+            code: ErrorCodes.SERVICE_UNAVAILABLE,
+            circuit_breaker: true,
+            error_id: errorId
+          }
+        };
+      }
+      
       // 其他API错误
       throw error;
     }
@@ -703,14 +756,26 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
           res.end();
           return;
         }
+        
         // 检查是否是熔断器触发的错误
         if (moderationError.error?.circuit_breaker) {
-          console.error(`[熔断器警报] 内容审核服务熔断器已触发，临时停止请求`);
-          res.write(`data: ${JSON.stringify(moderationError)}\n\n`);
+          console.error(`[熔断器警报] 内容审核服务熔断器已触发，拒绝处理流式请求`);
+          const errorResponse = {
+            error: {
+              message: moderationError.error.message || "审核服务暂时不可用（熔断保护已触发）",
+              type: ErrorTypes.SERVICE,
+              code: ErrorCodes.SERVICE_UNAVAILABLE,
+              circuit_breaker: true,
+              error_id: moderationError.error.error_id || `cb_${Date.now()}`
+            }
+          };
+          res.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
           return;
         }
+        
+        console.error(`[流处理] 审核服务错误，错误类型: ${moderationError.error?.type || 'unknown'}`);
         throw moderationError;
       }
     }
@@ -1105,14 +1170,26 @@ async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, first
           res.end(JSON.stringify(moderationError));
           return;
         }
+        
         // 检查是否是熔断器触发的错误
         if (moderationError.error?.circuit_breaker) {
-          console.error(`[熔断器警报] 内容审核服务熔断器已触发，临时停止请求`);
+          console.error(`[熔断器警报] 内容审核服务熔断器已触发，拒绝处理请求`);
           res.statusCode = 503;
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify(moderationError));
+          const errorResponse = {
+            error: {
+              message: moderationError.error.message || "审核服务暂时不可用（熔断保护已触发）",
+              type: ErrorTypes.SERVICE,
+              code: ErrorCodes.SERVICE_UNAVAILABLE,
+              circuit_breaker: true,
+              error_id: moderationError.error.error_id || `cb_${Date.now()}`
+            }
+          };
+          res.end(JSON.stringify(errorResponse));
           return;
         }
+        
+        console.error(`[普通处理] 审核服务错误，错误类型: ${moderationError.error?.type || 'unknown'}`);
         throw moderationError;
       }
     }
