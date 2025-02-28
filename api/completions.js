@@ -508,29 +508,22 @@ async function sendToSecondProvider(req, secondProviderUrl, secondProviderConfig
 
 // 处理审核服务
 async function performModeration(messages, firstProviderUrl, firstProviderConfig) {
-  // 每次调用前都检查熔断器状态
-  const health = config.serviceHealth['firstProvider'];
-  console.log(`[审核服务] 检查熔断器状态: circuitBreakerTripped=${health.circuitBreakerTripped}, failureCount=${health.failureCount}/${config.serviceHealthConfig.maxErrors}`);
-  
-  if (health.circuitBreakerTripped) {
-    // 熔断器已触发，检查是否可以重置
-    if (Date.now() > health.circuitBreakerResetTime) {
-      console.log(`[熔断器] 审核服务熔断器重置时间已到，重新启用服务`);
-      health.circuitBreakerTripped = false;
-      health.failureCount = 0;
-    } else {
-      // 熔断器仍处于触发状态，拒绝请求
-      console.error(`[熔断器警报] 审核服务仍处于熔断状态，将在 ${new Date(health.circuitBreakerResetTime).toISOString()} 重置，拒绝处理请求`);
-      throw {
-        error: {
-          message: "内容审核服务暂时不可用，请稍后再试",
-          type: ErrorTypes.SERVICE,
-          code: ErrorCodes.SERVICE_UNAVAILABLE,
-          circuit_breaker: true
-        }
-      };
-    }
+  // 使用checkCircuitBreaker函数检查熔断器状态，而不是直接访问config
+  if (!checkCircuitBreaker('firstProvider')) {
+    console.error(`[熔断器警报] 审核服务熔断器已触发，拒绝处理请求`);
+    throw {
+      error: {
+        message: "内容审核服务暂时不可用，请稍后再试",
+        type: ErrorTypes.SERVICE,
+        code: ErrorCodes.SERVICE_UNAVAILABLE,
+        circuit_breaker: true
+      }
+    };
   }
+
+  // 记录状态信息（用于调试）
+  const health = config.serviceHealth['firstProvider'];
+  console.log(`[审核服务] 熔断器状态: circuitBreakerTripped=${health.circuitBreakerTripped}, failureCount=${health.failureCount}/${config.serviceHealthConfig.maxErrors}`);
 
   try {
     // 选择一个审核模型
@@ -651,17 +644,13 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
       // 使用新增的错误日志函数记录详细信息
       const errorId = logModerationServiceError(error, selectedModel);
       
-      // 重新检查熔断器状态（可能刚刚触发）
-      const health = config.serviceHealth['firstProvider'];
-      console.error(`[${errorId}] 熔断器状态更新: circuitBreakerTripped=${health.circuitBreakerTripped}, failureCount=${health.failureCount}/${config.serviceHealthConfig.maxErrors}`);
-      
       // 如果错误已经是我们格式化过的违规错误，直接抛出
       if (error.error?.code === ErrorCodes.CONTENT_VIOLATION) {
         throw error;
       }
       
-      // 如果熔断器刚刚被触发，使用熔断器错误
-      if (health.circuitBreakerTripped) {
+      // 检查熔断器状态（可能刚刚触发）
+      if (!checkCircuitBreaker('firstProvider')) {
         console.error(`[${errorId}] 熔断器已触发，返回熔断器错误响应`);
         throw {
           error: {
