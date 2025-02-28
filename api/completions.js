@@ -494,7 +494,7 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
     console.error(`[熔断器警报] 主服务熔断器已触发，拒绝处理请求`);
     throw {
       error: {
-        message: "内容审核服务暂时不可用，请稍后再试",
+        message: "服务暂时不可用，请稍后再试",
         type: ErrorTypes.SERVICE,
         code: ErrorCodes.SERVICE_UNAVAILABLE,
         circuit_breaker: true
