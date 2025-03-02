@@ -351,7 +351,7 @@ const moderationPrompts = {
 # RESPONSE #
 必须按照以下JSON格式严格输出审核结果:
 {
-    "isViolation": false,  // 若内容达到Level 5则返回true,否则返回false
+    "isViolation": false,  // 只有内容达到Level 5才返回true,否则返回false
     "riskLevel": 1,        // 输出1-5的整数,表示内容风险等级
 }
 
@@ -360,7 +360,7 @@ const moderationPrompts = {
 2. 必须包含且仅包含以上两个参数
 3. isViolation必须为布尔值
 4. riskLevel必须为1-5的整数
-5. 当riskLevel为5时,isViolation必须为true`,
+5. 只有当riskLevel为5时，isViolation才为true`,
 
   FINAL_SYSTEM_CONTENT: `
 停下，现在回忆你的身份和职责：
