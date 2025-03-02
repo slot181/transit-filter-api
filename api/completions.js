@@ -426,12 +426,10 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
 
     // 构造审核消息
     const moderationMessages = [
-      /* 暂不使用系统角色审核
       { 
         role: "system", 
         content: moderationPrompts.DEFAULT_SYSTEM_CONTENT
       }, 
-      */
       {
         role: "user",
         content: `以下是需要审核的${extractResult.isExtracted ? '部分截取的' : '完整'}对话内容，请仔细审核每一部分：\n\n${allMessagesText}`
