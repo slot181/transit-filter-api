@@ -540,6 +540,28 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
   }
 }
 
+// 检查模型是否在白名单中的函数
+function isModelWhitelisted(modelName) {
+  if (!modelName) return false;
+  
+  // 转换为小写以便不区分大小写比较
+  const lowerModelName = modelName.toLowerCase();
+  
+  // 检查模型是否在白名单中
+  return config.whitelistedModels.some(whitelistedModel => {
+    // 精确匹配
+    if (lowerModelName === whitelistedModel) return true;
+    
+    // 通配符匹配（如：gpt-4*可以匹配所有gpt-4开头的模型）
+    if (whitelistedModel.endsWith('*')) {
+      const prefix = whitelistedModel.slice(0, -1);
+      return lowerModelName.startsWith(prefix);
+    }
+    
+    return false;
+  });
+}
+
 // 处理流式响应的函数
 async function handleStream(req, res, firstProviderUrl, secondProviderUrl, firstProviderKey, secondProviderKey, skipModeration = false) {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -565,6 +587,15 @@ async function handleStream(req, res, firstProviderUrl, secondProviderUrl, first
 
   try {
     const textMessages = preprocessMessages(req.body.messages);
+    
+    // 检查模型是否在白名单中
+    const requestModel = req.body.model;
+    if (!skipModeration && requestModel && isModelWhitelisted(requestModel)) {
+      console.log(`模型 "${requestModel}" 在白名单中，跳过内容审核`);
+      skipModeration = true;
+      // 添加请求头标记模型已跳过审核
+      res.setHeader('X-Content-Review-Skipped', 'whitelist');
+    }
     const firstProviderConfig = {
       headers: {
         'Authorization': `Bearer ${firstProviderKey}`,
@@ -979,6 +1010,15 @@ function extractRandomSegments(messages, maxLength = 30000) {
 async function handleNormal(req, res, firstProviderUrl, secondProviderUrl, firstProviderKey, secondProviderKey, skipModeration = false) {
   try {
     const textMessages = preprocessMessages(req.body.messages);
+    
+    // 检查模型是否在白名单中
+    const requestModel = req.body.model;
+    if (!skipModeration && requestModel && isModelWhitelisted(requestModel)) {
+      console.log(`模型 "${requestModel}" 在白名单中，跳过内容审核`);
+      skipModeration = true;
+      // 添加请求头标记模型已跳过审核
+      res.setHeader('X-Content-Review-Skipped', 'whitelist');
+    }
     const firstProviderConfig = {
       headers: {
         'Authorization': `Bearer ${firstProviderKey}`,

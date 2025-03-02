@@ -89,6 +89,11 @@ const config = {
       : []
   },
   
+  // 白名单模型配置（这些模型将跳过内容审核）
+  whitelistedModels: process.env.WHITELISTED_MODELS
+    ? process.env.WHITELISTED_MODELS.split(',').map(model => model.trim().toLowerCase()).filter(Boolean)
+    : [],
+  
   // 第二提供商配置（主要服务）
   secondProvider: {
     url: process.env.SECOND_PROVIDER_URL,
