@@ -345,6 +345,10 @@ const moderationPrompts = {
 3. 我将确保：
    - 评级准确性
    - 格式规范性
+   - 只允许输出JSON格式
+   - 必须包含且仅包含以上两个参数
+   - isViolation必须为布尔值
+   - riskLevel必须为1-5的整数
    - Level 5时必须触发违规标记（其它等级不触发）
    - 不输出任何额外说明`,
 
@@ -410,6 +414,10 @@ const moderationPrompts = {
 3. 我将确保：
    - 评级准确性
    - 格式规范性
+   - 只允许输出JSON格式
+   - 必须包含且仅包含以上两个参数
+   - isViolation必须为布尔值
+   - riskLevel必须为1-5的整数
    - Level 5时必须触发违规标记（其它等级不触发）
    - 不输出任何额外说明
 

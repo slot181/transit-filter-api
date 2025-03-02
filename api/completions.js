@@ -426,15 +426,19 @@ async function performModeration(messages, firstProviderUrl, firstProviderConfig
 
     // 构造审核消息
     const moderationMessages = [
+      /* 暂不使用系统角色审核
       { 
         role: "system", 
-        content: moderationPrompts.DEFAULT_SYSTEM_CONTENT + "\n\n# INTERNAL_MODERATION_FLAG: DO_NOT_MODERATE_THIS_IS_ALREADY_A_MODERATION_REQUEST #"
-      },
+        content: moderationPrompts.DEFAULT_SYSTEM_CONTENT
+      }, 
+      */
       {
         role: "user",
         content: `以下是需要审核的${extractResult.isExtracted ? '部分截取的' : '完整'}对话内容，请仔细审核每一部分：\n\n${allMessagesText}`
       },
-      { role: "user", content: moderationPrompts.FINAL_SYSTEM_CONTENT }
+      { role: "user", 
+        content: moderationPrompts.FINAL_SYSTEM_CONTENT 
+      }
     ];
 
     const moderationRequest = {
@@ -1123,36 +1127,6 @@ module.exports = async (req, res) => {
       }
     }));
     return;
-  }
-
-  // 检查是否是内部审核请求，以避免无限循环
-  if (req.body && req.body.messages) {
-    const isInternalModerationRequest = req.body.messages.some(msg => 
-      msg.role === 'system' && 
-      typeof msg.content === 'string' && 
-      msg.content.includes('INTERNAL_MODERATION_FLAG: DO_NOT_MODERATE_THIS_IS_ALREADY_A_MODERATION_REQUEST')
-    );
-
-    if (isInternalModerationRequest) {
-      console.log('检测到内部审核请求，跳过审核步骤以避免无限循环');
-      // 直接处理请求，跳过审核
-      if (req.body.stream) {
-        await handleStream(
-          req, res, null, 
-          config.secondProvider.url, null, 
-          config.secondProvider.key, 
-          true // 标记为跳过审核
-        );
-      } else {
-        await handleNormal(
-          req, res, null, 
-          config.secondProvider.url, null, 
-          config.secondProvider.key,
-          true // 标记为跳过审核
-        );
-      }
-      return;
-    }
   }
 
   // 添加速率限制检查
